@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.81.1] - 2026-10-14
+
+### Fixed
+
+- *(project)* `meta project rm` no longer fails with `BareRepo (-8)` on bare-repo projects: the bare repo entry from `git worktree list` is skipped when checking worktrees for uncommitted changes. `meta project rename` gets the same guard
+
 ## [0.81.0] - 2026-09-24
 
 ### Added
