@@ -1854,7 +1854,11 @@ pub fn remove_project(project_name: &str, base_path: &Path, force: bool) -> Resu
                     // Check each worktree for uncommitted changes
                     for worktree_path in worktree_paths {
                         if worktree_path.exists() {
-                            if let Ok(repo) = Repository::open(&worktree_path) {
+                            // `worktree list` includes the bare repo itself; it has no workdir to status
+                            if let Some(repo) = Repository::open(&worktree_path)
+                                .ok()
+                                .filter(|r| !r.is_bare())
+                            {
                                 let mut status_opts = StatusOptions::new();
                                 status_opts.include_untracked(true);
                                 status_opts.include_ignored(false);
@@ -2055,34 +2059,37 @@ pub fn rename_project(old_name: &str, new_name: &str, base_path: &Path) -> Resul
     // Check for uncommitted changes if it's a git repository (not for symlinks)
     if !is_symlink && old_path.exists() && old_path.join(".git").exists() {
         let repo = Repository::open(&old_path)?;
+        // bare repos have no workdir to status
+        let repo = Some(repo).filter(|r| !r.is_bare());
+        if let Some(repo) = repo {
+            let mut status_opts = StatusOptions::new();
+            status_opts.include_untracked(true);
+            status_opts.include_ignored(false);
 
-        let mut status_opts = StatusOptions::new();
-        status_opts.include_untracked(true);
-        status_opts.include_ignored(false);
+            let statuses = repo.statuses(Some(&mut status_opts))?;
 
-        let statuses = repo.statuses(Some(&mut status_opts))?;
+            let has_changes = statuses.iter().any(|entry| {
+                let status = entry.status();
+                status.intersects(
+                    Status::INDEX_NEW
+                        | Status::INDEX_MODIFIED
+                        | Status::INDEX_DELETED
+                        | Status::INDEX_RENAMED
+                        | Status::INDEX_TYPECHANGE
+                        | Status::WT_NEW
+                        | Status::WT_MODIFIED
+                        | Status::WT_DELETED
+                        | Status::WT_TYPECHANGE
+                        | Status::WT_RENAMED,
+                )
+            });
 
-        let has_changes = statuses.iter().any(|entry| {
-            let status = entry.status();
-            status.intersects(
-                Status::INDEX_NEW
-                    | Status::INDEX_MODIFIED
-                    | Status::INDEX_DELETED
-                    | Status::INDEX_RENAMED
-                    | Status::INDEX_TYPECHANGE
-                    | Status::WT_NEW
-                    | Status::WT_MODIFIED
-                    | Status::WT_DELETED
-                    | Status::WT_TYPECHANGE
-                    | Status::WT_RENAMED,
-            )
-        });
-
-        if has_changes {
-            return Err(anyhow::anyhow!(
-                "Project '{}' has uncommitted changes. Please commit or stash them first.",
-                old_name
-            ));
+            if has_changes {
+                return Err(anyhow::anyhow!(
+                    "Project '{}' has uncommitted changes. Please commit or stash them first.",
+                    old_name
+                ));
+            }
         }
     }
 
