@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.82.0] - 2026-11-06
+
+### Added
+
+- *(project)* `meta project add` shows the workspace root, resolved path, source, and layout (bare or regular, depth, recursive) and asks for confirmation in an interactive terminal; `--yes` / `-y` skips it and non-interactive runs never prompt. See `docs/PROJECT_ADD.md` (#179)
+
+### Fixed
+
+- *(project)* Ctrl+C during `meta project add` aborts the clone and removes the partial project directory this run created, instead of leaving it behind. The same cleanup runs if creating the default worktree fails for a bare project. Pre-existing directories are never deleted (#179)
+- *(project)* `meta project add` with a URL no longer registers an existing directory that is not a valid git repository (such as a leftover from an interrupted clone) and reports success; it errors and asks you to remove the directory (#179)
+
 ## [0.81.1] - 2026-10-14
 
 ### Fixed
