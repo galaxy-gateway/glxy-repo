@@ -1,8 +1,71 @@
 use anyhow::{Context, Result};
 use colored::*;
 use git2::{Cred, FetchOptions, RemoteCallbacks, Repository};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Once;
+
+static CANCELLED: AtomicBool = AtomicBool::new(false);
+static CLONING: AtomicBool = AtomicBool::new(false);
+static HANDLER: Once = Once::new();
+
+/// Removes a project directory this run created unless `finish()` is called.
+/// While alive, Ctrl+C sets a flag that aborts the clone (via the libgit2
+/// progress callback) so the error path runs and Drop cleans up; outside a
+/// guard, Ctrl+C exits immediately as usual.
+pub struct CloneGuard {
+    path: Option<PathBuf>,
+}
+
+impl CloneGuard {
+    /// `path` must not have existed before this run.
+    pub fn new(path: &Path) -> Self {
+        HANDLER.call_once(|| {
+            let _ = ctrlc::set_handler(|| {
+                if CLONING.load(Ordering::SeqCst) {
+                    CANCELLED.store(true, Ordering::SeqCst);
+                } else {
+                    std::process::exit(130);
+                }
+            });
+        });
+        CANCELLED.store(false, Ordering::SeqCst);
+        CLONING.store(true, Ordering::SeqCst);
+        Self {
+            path: Some(path.to_path_buf()),
+        }
+    }
+
+    /// Clone succeeded: keep the directory and restore default Ctrl+C.
+    pub fn finish(&mut self) {
+        self.path = None;
+        CLONING.store(false, Ordering::SeqCst);
+    }
+}
+
+impl Drop for CloneGuard {
+    fn drop(&mut self) {
+        CLONING.store(false, Ordering::SeqCst);
+        if let Some(p) = self.path.take() {
+            if p.exists() && std::fs::remove_dir_all(&p).is_ok() {
+                eprintln!("  Removed partial clone at {}", p.display());
+            }
+        }
+    }
+}
+
+fn cancel_aware(callbacks: &mut RemoteCallbacks<'_>) {
+    callbacks.transfer_progress(|_| !CANCELLED.load(Ordering::SeqCst));
+}
+
+fn clone_error(e: git2::Error) -> anyhow::Error {
+    if CANCELLED.load(Ordering::SeqCst) {
+        anyhow::anyhow!("Clone cancelled by user")
+    } else {
+        anyhow::anyhow!("Failed to clone repository: {}", e)
+    }
+}
 
 /// Parse and validate a `--depth <N>` CLI argument value into a shallow-clone
 /// depth, shared by `meta git clone` and `meta project add`.
@@ -138,7 +201,7 @@ pub fn clone_with_auth(
             ))
         });
 
-        // Configure fetch options with our callbacks
+        cancel_aware(&mut callbacks);
         let mut fetch_options = FetchOptions::new();
         fetch_options.remote_callbacks(callbacks);
         if let Some(d) = depth {
@@ -155,7 +218,9 @@ pub fn clone_with_auth(
 
         // Clone the repository
         builder.clone(url, path).map_err(|e| {
-            if e.to_string().contains("authentication") || e.to_string().contains("SSH") {
+            if CANCELLED.load(Ordering::SeqCst) {
+                clone_error(e)
+            } else if e.to_string().contains("authentication") || e.to_string().contains("SSH") {
                 anyhow::anyhow!("SSH authentication failed. Please ensure:\n  1. Your SSH key is set up correctly (~/.ssh/id_ed25519 or ~/.ssh/id_rsa)\n  2. The key is added to your GitHub/GitLab account\n  3. You have access to the repository\n\nOriginal error: {}", e)
             } else {
                 anyhow::anyhow!("Failed to clone repository: {}", e)
@@ -164,7 +229,10 @@ pub fn clone_with_auth(
     } else {
         // For HTTPS URLs, use RepoBuilder without authentication callbacks so we
         // can still apply a shallow-clone depth when requested.
+        let mut callbacks = RemoteCallbacks::new();
+        cancel_aware(&mut callbacks);
         let mut fetch_options = FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
         if let Some(d) = depth {
             fetch_options.depth(d);
         }
@@ -175,9 +243,7 @@ pub fn clone_with_auth(
             builder.bare(true);
         }
 
-        builder
-            .clone(url, path)
-            .map_err(|e| anyhow::anyhow!("Failed to clone repository: {}", e))
+        builder.clone(url, path).map_err(clone_error)
     }
 }
 
@@ -260,6 +326,21 @@ pub fn detect_default_branch(repo_path: &Path) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clone_guard_removes_dir_unless_finished() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gone = tmp.path().join("gone");
+        let kept = tmp.path().join("kept");
+        std::fs::create_dir(&gone).unwrap();
+        std::fs::create_dir(&kept).unwrap();
+        drop(CloneGuard::new(&gone));
+        let mut g = CloneGuard::new(&kept);
+        g.finish();
+        drop(g);
+        assert!(!gone.exists());
+        assert!(kept.exists());
+    }
 
     #[test]
     fn clone_with_auth_rejects_non_positive_depth() {

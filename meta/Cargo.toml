@@ -37,6 +37,7 @@ metarepo-core = { version = "0.81.1", path = "../meta-core" }
 # Git plugin dependencies
 git2 = { workspace = true }
 tokio = { workspace = true }
+ctrlc = "3.4"
 
 # Rules plugin dependencies
 serde_yaml = "0.9"

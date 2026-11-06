@@ -4,7 +4,7 @@ pub mod summary;
 
 pub use git_operations::{
     clone_with_auth, create_default_worktree, detect_default_branch, parse_depth_arg,
-    refetch_shallow,
+    refetch_shallow, CloneGuard,
 };
 pub use output_manager::{JobStatus, OutputManager, ProgressIndicator, ProjectOutput};
 pub use summary::{output_detail, print_summary, Outcome, SummaryRow};

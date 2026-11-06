@@ -8,8 +8,8 @@ use anyhow::Result;
 use clap::ArgMatches;
 use colored::Colorize;
 use metarepo_core::{
-    arg, command, is_interactive, plugin, prompt_select, prompt_text, prompt_url, BasePlugin,
-    MetaPlugin, NonInteractiveMode, RuntimeConfig,
+    arg, command, is_interactive, plugin, prompt_confirm, prompt_select, prompt_text, prompt_url,
+    BasePlugin, MetaPlugin, NonInteractiveMode, RuntimeConfig,
 };
 
 /// ProjectPlugin using the new simplified plugin architecture
@@ -136,6 +136,12 @@ impl ProjectPlugin {
                             .long("depth")
                             .help("Git shallow clone depth (limits history fetched when cloning)")
                             .takes_value(true)
+                    )
+                    .arg(
+                        arg("yes")
+                            .long("yes")
+                            .short('y')
+                            .help("Skip the interactive confirmation before adding")
                     )
             )
             .command(
@@ -479,6 +485,32 @@ fn handle_add(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
         // Check global default (defaults to true for bare repos)
         config.meta_config.default_bare.unwrap_or(true)
     };
+
+    if is_interactive() && !matches.get_flag("yes") {
+        println!("\n  {}", "Confirm new project".cyan().bold());
+        println!("     Workspace: {}", base_path.display());
+        println!("     Path:      {}", base_path.join(&path).display());
+        println!(
+            "     Source:    {}",
+            source.unwrap_or("(existing directory)")
+        );
+        println!(
+            "     Layout:    {}{}{}",
+            if use_bare {
+                "bare + worktree"
+            } else {
+                "regular clone"
+            },
+            clone_depth
+                .map(|d| format!(", depth {}", d))
+                .unwrap_or_default(),
+            if use_recursive { ", recursive" } else { "" }
+        );
+        if !prompt_confirm("Proceed?", true, non_interactive)? {
+            println!("  Cancelled, nothing was changed");
+            return Ok(());
+        }
+    }
 
     if use_recursive || flatten || max_depth.is_some() {
         if clone_depth.is_some() {

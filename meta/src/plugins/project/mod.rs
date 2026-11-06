@@ -9,7 +9,7 @@ use std::process::Command;
 
 // Import shared git operations
 use crate::plugins::shared::{
-    clone_with_auth, create_default_worktree, print_summary, Outcome, SummaryRow,
+    clone_with_auth, create_default_worktree, print_summary, CloneGuard, Outcome, SummaryRow,
 };
 
 #[cfg(unix)]
@@ -522,6 +522,9 @@ pub fn import_project_with_options(
     // If not external and directory doesn't exist, clone it
     if !is_external && !local_project_path.exists() {
         if !final_repo_url.starts_with("local:") && !final_repo_url.starts_with("external:") {
+            // Dir did not exist before this run: remove it if clone is
+            // interrupted (Ctrl+C) or a later step fails.
+            let mut guard = CloneGuard::new(&local_project_path);
             println!("\n  {} {}", "🌱".green(), "Adding new project...".bold());
             println!(
                 "     {} {}",
@@ -574,9 +577,20 @@ pub fn import_project_with_options(
                 );
                 clone_with_auth(&final_repo_url, &local_project_path, false, clone_depth)?;
             }
+            guard.finish();
         } else {
             return Err(anyhow::anyhow!("Cannot clone a local project URL"));
         }
+    } else if !is_external
+        && !final_repo_url.starts_with("local:")
+        && Repository::open(&local_project_path).is_err()
+    {
+        // A leftover from an interrupted clone would otherwise be registered
+        // as if it were a healthy project.
+        return Err(anyhow::anyhow!(
+            "Directory '{}' exists but is not a valid git repository (interrupted clone?). Remove it and retry",
+            project_path
+        ));
     }
 
     // Add to .meta file
