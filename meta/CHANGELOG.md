@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- *(project)* `meta project add` shows a live spinner with object and byte counts while cloning, prints the duration of each step, and reports the total time (#180)
+- *(project)* interactive `meta project add` asks for layout (bare or regular) and history (full or shallow), then offers Proceed, Edit options (including the project path), or Cancel before touching disk; `--yes` skips the review (#181)
+- *(project)* `project add` and `project remove` list the changes made to `.meta`, `.gitignore`, and the project directory, and offer to commit the `.meta` and `.gitignore` updates. `--commit` and `--no-commit` control it non-interactively (#182)
+
 ## [0.82.0] - 2026-11-06
 
 ### Added

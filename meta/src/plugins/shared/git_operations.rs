@@ -3,12 +3,34 @@ use colored::*;
 use git2::{Cred, FetchOptions, RemoteCallbacks, Repository};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Once;
 
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 static CLONING: AtomicBool = AtomicBool::new(false);
 static HANDLER: Once = Once::new();
+static RECV_OBJECTS: AtomicUsize = AtomicUsize::new(0);
+static TOTAL_OBJECTS: AtomicUsize = AtomicUsize::new(0);
+static RECV_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+/// Live clone progress: (received objects, total objects, received bytes).
+pub fn clone_progress() -> (usize, usize, usize) {
+    (
+        RECV_OBJECTS.load(Ordering::Relaxed),
+        TOTAL_OBJECTS.load(Ordering::Relaxed),
+        RECV_BYTES.load(Ordering::Relaxed),
+    )
+}
+
+/// Human text for the spinner: "1200/5400 objects, 3.1 MB" or "connecting".
+pub fn clone_progress_text() -> String {
+    let (r, t, b) = clone_progress();
+    if t == 0 {
+        "connecting".to_string()
+    } else {
+        format!("{}/{} objects, {}", r, t, super::spinner::format_bytes(b))
+    }
+}
 
 /// Removes a project directory this run created unless `finish()` is called.
 /// While alive, Ctrl+C sets a flag that aborts the clone (via the libgit2
@@ -32,6 +54,9 @@ impl CloneGuard {
         });
         CANCELLED.store(false, Ordering::SeqCst);
         CLONING.store(true, Ordering::SeqCst);
+        for a in [&RECV_OBJECTS, &TOTAL_OBJECTS, &RECV_BYTES] {
+            a.store(0, Ordering::Relaxed);
+        }
         Self {
             path: Some(path.to_path_buf()),
         }
@@ -56,7 +81,12 @@ impl Drop for CloneGuard {
 }
 
 fn cancel_aware(callbacks: &mut RemoteCallbacks<'_>) {
-    callbacks.transfer_progress(|_| !CANCELLED.load(Ordering::SeqCst));
+    callbacks.transfer_progress(|p| {
+        RECV_OBJECTS.store(p.received_objects(), Ordering::Relaxed);
+        TOTAL_OBJECTS.store(p.total_objects(), Ordering::Relaxed);
+        RECV_BYTES.store(p.received_bytes(), Ordering::Relaxed);
+        !CANCELLED.load(Ordering::SeqCst)
+    });
 }
 
 fn clone_error(e: git2::Error) -> anyhow::Error {

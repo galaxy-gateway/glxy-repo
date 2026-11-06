@@ -1,12 +1,14 @@
 pub mod git_operations;
 pub mod output_manager;
+pub mod spinner;
 pub mod summary;
 
 pub use git_operations::{
-    clone_with_auth, create_default_worktree, detect_default_branch, parse_depth_arg,
-    refetch_shallow, CloneGuard,
+    clone_progress, clone_progress_text, clone_with_auth, create_default_worktree,
+    detect_default_branch, parse_depth_arg, refetch_shallow, CloneGuard,
 };
 pub use output_manager::{JobStatus, OutputManager, ProgressIndicator, ProjectOutput};
+pub use spinner::{format_bytes, format_duration, Spinner};
 pub use summary::{output_detail, print_summary, Outcome, SummaryRow};
 
 /// Render a relative path as a portable identifier: always `/`-separated, so a

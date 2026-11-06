@@ -1,13 +1,38 @@
 # meta project add: confirmation and interrupt safety
 
-Tracked in [#179](https://github.com/codyaverett/metarepo/issues/179).
+Tracked in [#179](https://github.com/codyaverett/metarepo/issues/179),
+[#180](https://github.com/codyaverett/metarepo/issues/180),
+[#181](https://github.com/codyaverett/metarepo/issues/181) and
+[#182](https://github.com/codyaverett/metarepo/issues/182).
 
-## Confirmation
+## Option review
 
-In an interactive terminal, `meta project add` prints the workspace root, the
-resolved project path, the source, and the layout (bare/regular, depth,
-recursive) and asks "Proceed?" before touching disk. Pass `--yes` / `-y` to
-skip it. Non-interactive runs (pipes, CI) never prompt.
+In an interactive terminal, `meta project add` asks for the layout (bare +
+worktree or regular clone) and history (full or shallow with a depth), unless
+`--bare` / `--depth` were given. It then shows the workspace root, resolved
+path, source and layout and offers Proceed / Edit options / Cancel. Edit
+re-asks everything, including the project path, so the location can be changed
+before anything touches disk. Pass `--yes` / `-y` to skip the review.
+Non-interactive runs (pipes, CI) never prompt.
+
+## Progress and timing
+
+Clone and default-worktree steps show a spinner with live object and byte
+counts and elapsed time (plain lines when stdout is not a TTY). Each step
+prints a done line with its duration, and the final line shows the total, for
+example `Successfully added 'x' in 12.4s`. `meta project update` and the git
+sync commands already print per-project durations in their summary tables.
+
+## Change report and commit offer
+
+After `project add` and `project remove`, the command lists what changed:
+created or modified `.meta` and `.gitignore` (with added and removed lines)
+and the project directory created or deleted. In a git workspace it then
+offers to commit just those files as `chore(meta): add project X` (or
+`remove project X`). A pathspec-limited commit is used so other staged work is
+never swept in. `--commit` commits without asking, `--no-commit` skips the
+offer; non-interactive runs without a flag print the manual command instead.
+A failed commit (hook, signing) warns and does not fail the command.
 
 ## Ctrl+C and failures during clone
 

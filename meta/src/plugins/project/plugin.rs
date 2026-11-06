@@ -1,15 +1,16 @@
+use super::changes::Snapshot;
 use super::{
     check_workspace, convert_to_bare, import_project_recursive_with_options,
     import_project_with_options, init_child_workspace, list_projects, list_projects_minimal,
-    remove_project, rename_project, show_project_tree, update_projects,
+    locate_workspace_config, remove_project, rename_project, show_project_tree, update_projects,
 };
 use crate::plugins::shared::parse_depth_arg;
 use anyhow::Result;
 use clap::ArgMatches;
 use colored::Colorize;
 use metarepo_core::{
-    arg, command, is_interactive, plugin, prompt_confirm, prompt_select, prompt_text, prompt_url,
-    BasePlugin, MetaPlugin, NonInteractiveMode, RuntimeConfig,
+    arg, command, is_interactive, plugin, prompt_select, prompt_text, prompt_url, BasePlugin,
+    MetaPlugin, NonInteractiveMode, RuntimeConfig,
 };
 
 /// ProjectPlugin using the new simplified plugin architecture
@@ -141,7 +142,17 @@ impl ProjectPlugin {
                         arg("yes")
                             .long("yes")
                             .short('y')
-                            .help("Skip the interactive confirmation before adding")
+                            .help("Skip the interactive option review before adding")
+                    )
+                    .arg(
+                        arg("commit")
+                            .long("commit")
+                            .help("Commit the .meta and .gitignore updates without asking")
+                    )
+                    .arg(
+                        arg("no-commit")
+                            .long("no-commit")
+                            .help("Do not offer to commit the .meta and .gitignore updates")
                     )
             )
             .command(
@@ -276,6 +287,16 @@ impl ProjectPlugin {
                             .short('f')
                             .help("Force removal even with uncommitted changes, and delete directory")
                     )
+                    .arg(
+                        arg("commit")
+                            .long("commit")
+                            .help("Commit the .meta and .gitignore updates without asking")
+                    )
+                    .arg(
+                        arg("no-commit")
+                            .long("no-commit")
+                            .help("Do not offer to commit the .meta and .gitignore updates")
+                    )
             )
             .command(
                 command("rename")
@@ -408,6 +429,127 @@ impl ProjectPlugin {
     }
 }
 
+/// --commit => Some(true), --no-commit => Some(false), neither => ask.
+fn commit_choice(matches: &ArgMatches) -> Option<bool> {
+    if matches.get_flag("no-commit") {
+        Some(false)
+    } else if matches.get_flag("commit") {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+struct AddChoices {
+    path: String,
+    bare: bool,
+    depth: Option<i32>,
+}
+
+/// Ask for layout and depth (unless set by flag), then loop on a summary with
+/// Proceed / Edit / Cancel. Returns None when the user cancels.
+fn review_add_options(
+    base_path: &std::path::Path,
+    mut c: AddChoices,
+    source: Option<&str>,
+    recursive: bool,
+    bare_locked: bool,
+    depth_locked: bool,
+    ni: NonInteractiveMode,
+) -> Result<Option<AddChoices>> {
+    let clonable = source.is_some_and(metarepo_core::is_supported_git_url);
+    let ask = |c: &mut AddChoices, with_path: bool| -> Result<()> {
+        if with_path {
+            loop {
+                let p = prompt_text(
+                    "Project path (relative to workspace)",
+                    Some(&c.path),
+                    false,
+                    ni,
+                )?;
+                match metarepo_core::validate_path_segment("project name", &p) {
+                    Ok(()) => {
+                        c.path = p;
+                        break;
+                    }
+                    Err(e) => println!("  {} {}", "x".red(), e),
+                }
+            }
+        }
+        if clonable && !bare_locked {
+            let items = vec!["Bare repository + worktree", "Regular clone"];
+            let pick = prompt_select("Layout", items, Some(if c.bare { 0 } else { 1 }), ni)?;
+            c.bare = pick.starts_with("Bare");
+        }
+        if clonable && !depth_locked && !recursive {
+            let pick = prompt_select(
+                "History",
+                vec!["Full history", "Shallow clone"],
+                Some(if c.depth.is_some() { 1 } else { 0 }),
+                ni,
+            )?;
+            c.depth = if pick.starts_with("Shallow") {
+                let raw = prompt_text("Depth (commits)", Some("1"), false, ni)?;
+                match parse_depth_arg(Some(&raw)) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        println!("  {} {} - using full history", "!".yellow(), e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+        }
+        Ok(())
+    };
+
+    ask(&mut c, false)?;
+    loop {
+        let target = base_path.join(&c.path);
+        println!("\n  {}", "New project".cyan().bold());
+        println!("     Workspace: {}", base_path.display());
+        println!(
+            "     Path:      {}{}",
+            target.display(),
+            if target.exists() {
+                "  (already exists)"
+            } else {
+                ""
+            }
+        );
+        println!(
+            "     Source:    {}",
+            source.unwrap_or("(existing directory)")
+        );
+        if clonable {
+            println!(
+                "     Layout:    {}{}{}",
+                if c.bare {
+                    "bare + worktree"
+                } else {
+                    "regular clone"
+                },
+                c.depth
+                    .map(|d| format!(", depth {}", d))
+                    .unwrap_or_default(),
+                if recursive { ", recursive" } else { "" }
+            );
+        }
+        let pick = prompt_select(
+            "Next step",
+            vec!["Proceed", "Edit options", "Cancel"],
+            Some(0),
+            ni,
+        )?;
+        match pick.as_str() {
+            "Proceed" => return Ok(Some(c)),
+            "Edit options" => ask(&mut c, true)?,
+            _ => return Ok(None),
+        }
+    }
+}
+
 /// Handler for the add command
 fn handle_add(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
     let non_interactive = config
@@ -486,31 +628,34 @@ fn handle_add(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
         config.meta_config.default_bare.unwrap_or(true)
     };
 
-    if is_interactive() && !matches.get_flag("yes") {
-        println!("\n  {}", "Confirm new project".cyan().bold());
-        println!("     Workspace: {}", base_path.display());
-        println!("     Path:      {}", base_path.join(&path).display());
-        println!(
-            "     Source:    {}",
-            source.unwrap_or("(existing directory)")
-        );
-        println!(
-            "     Layout:    {}{}{}",
-            if use_bare {
-                "bare + worktree"
-            } else {
-                "regular clone"
-            },
-            clone_depth
-                .map(|d| format!(", depth {}", d))
-                .unwrap_or_default(),
-            if use_recursive { ", recursive" } else { "" }
-        );
-        if !prompt_confirm("Proceed?", true, non_interactive)? {
-            println!("  Cancelled, nothing was changed");
-            return Ok(());
+    let (path, use_bare, clone_depth) = if is_interactive() && !matches.get_flag("yes") {
+        let start = AddChoices {
+            path,
+            bare: use_bare,
+            depth: clone_depth,
+        };
+        match review_add_options(
+            &base_path,
+            start,
+            source,
+            use_recursive,
+            bare,
+            matches.get_one::<String>("depth").is_some(),
+            non_interactive,
+        )? {
+            Some(c) => (c.path, c.bare, c.depth),
+            None => {
+                println!("  Cancelled, nothing was changed");
+                return Ok(());
+            }
         }
-    }
+    } else {
+        (path, use_bare, clone_depth)
+    };
+
+    let snapshot = locate_workspace_config(&base_path)
+        .ok()
+        .map(|meta_file| Snapshot::take(&base_path, &meta_file, &path));
 
     if use_recursive || flatten || max_depth.is_some() {
         if clone_depth.is_some() {
@@ -537,6 +682,10 @@ fn handle_add(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
     // TTY, offer to enable it). Activation is always explicit.
     let repo_root = base_path.join(&path);
     crate::plugins::module::offer_enable_after_add(&repo_root, config, non_interactive);
+
+    if let Some(snap) = snapshot {
+        snap.finish("add", &path, commit_choice(matches), non_interactive)?;
+    }
 
     Ok(())
 }
@@ -639,7 +788,13 @@ fn handle_remove(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
         config.working_dir.clone()
     };
 
+    let snapshot = locate_workspace_config(&base_path)
+        .ok()
+        .map(|meta_file| Snapshot::take(&base_path, &meta_file, &name));
     remove_project(&name, &base_path, force)?;
+    if let Some(snap) = snapshot {
+        snap.finish("remove", &name, commit_choice(matches), non_interactive)?;
+    }
     Ok(())
 }
 

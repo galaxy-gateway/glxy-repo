@@ -9,7 +9,8 @@ use std::process::Command;
 
 // Import shared git operations
 use crate::plugins::shared::{
-    clone_with_auth, create_default_worktree, print_summary, CloneGuard, Outcome, SummaryRow,
+    clone_progress, clone_progress_text, clone_with_auth, create_default_worktree, format_bytes,
+    format_duration, print_summary, CloneGuard, Outcome, Spinner, SummaryRow,
 };
 
 #[cfg(unix)]
@@ -22,6 +23,7 @@ use std::os::windows::fs;
 pub use self::convert::convert_to_bare;
 pub use self::plugin::ProjectPlugin;
 
+mod changes;
 mod convert;
 mod plugin;
 
@@ -30,7 +32,7 @@ mod plugin;
 /// rather than the legacy `.meta` name alone. Returns the discovered path;
 /// `MetaConfig::load_from_file` / `save_to_file` then detect the format from
 /// that filename, so existing load/save calls keep working unchanged.
-fn locate_workspace_config(base_path: &Path) -> Result<PathBuf> {
+pub(super) fn locate_workspace_config(base_path: &Path) -> Result<PathBuf> {
     Ok(MetaConfig::locate_in(base_path)?.path)
 }
 
@@ -257,6 +259,16 @@ pub fn import_project(project_path: &str, source: Option<&str>, base_path: &Path
     import_project_with_options(project_path, source, base_path, false, false, None)
 }
 
+/// "Cloned 5400 objects, 12.3 MB" from the last clone's counters.
+fn clone_summary() -> String {
+    let (_, total, bytes) = clone_progress();
+    if total == 0 {
+        "Cloned".to_string()
+    } else {
+        format!("Cloned {} objects, {}", total, format_bytes(bytes))
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn import_project_with_options(
     project_path: &str,
@@ -266,6 +278,7 @@ pub fn import_project_with_options(
     bare: bool,
     clone_depth: Option<i32>,
 ) -> Result<()> {
+    let add_started = std::time::Instant::now();
     // Reject path-traversal / absolute / null-byte project names before they
     // flow into base_path.join(...) or filesystem operations below.
     metarepo_core::validate_path_segment("project name", project_path)?;
@@ -543,39 +556,24 @@ pub fn import_project_with_options(
                     "Type:".bright_black(),
                     "Bare repository".bright_magenta()
                 );
-                println!(
-                    "     {} {}",
-                    "Status:".bright_black(),
-                    "Cloning bare repository...".yellow()
-                );
 
                 // Clone as bare repo to <project>/.git/
                 let bare_path = local_project_path.join(".git");
+                let sp = Spinner::start("Cloning bare repository", clone_progress_text);
                 clone_with_auth(&final_repo_url, &bare_path, true, clone_depth)?;
+                sp.finish(&clone_summary());
 
                 // Create the project directory
                 std::fs::create_dir_all(&local_project_path)?;
 
                 // Create default worktree at <project>/<default-branch>/
-                println!(
-                    "     {} {}",
-                    "Status:".bright_black(),
-                    "Creating default worktree...".yellow()
-                );
+                let sp = Spinner::start("Creating default worktree", String::new);
                 create_default_worktree(&bare_path, &local_project_path)?;
-
-                println!(
-                    "     {} {}",
-                    "✅".green(),
-                    "Bare repository and default worktree created".green()
-                );
+                sp.finish("Default worktree created");
             } else {
-                println!(
-                    "     {} {}",
-                    "Status:".bright_black(),
-                    "Cloning repository...".yellow()
-                );
+                let sp = Spinner::start("Cloning repository", clone_progress_text);
                 clone_with_auth(&final_repo_url, &local_project_path, false, clone_depth)?;
+                sp.finish(&clone_summary());
             }
             guard.finish();
         } else {
@@ -625,11 +623,12 @@ pub fn import_project_with_options(
 
     // Success message
     println!(
-        "\n  {} {}",
+        "\n  {} {} {}",
         "✅".green(),
         format!("Successfully added '{}'", project_path)
             .bold()
-            .green()
+            .green(),
+        format!("in {}", format_duration(add_started.elapsed())).dimmed()
     );
 
     if is_external {
