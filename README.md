@@ -1,105 +1,75 @@
-# Metarepo - Multi-Project Management Tool
+# meta
 
-A Rust multi-repo workspace CLI inspired by the Node.js [meta](https://github.com/mateodelnorte/meta) tool.
+**One workspace for all your git repos.** A fast Rust CLI that lets you treat a folder full of independent repositories as a single thing, without merging them into a monorepo.
 
-**Dual product surface** (see [docs/PRODUCT.md](docs/PRODUCT.md)):
-
-1. **Multi-repo CLI (stable, default)** — fleet git ops, projects, exec/run, bare-first worktrees, config cascade, status dashboard.
-2. **Agent / extension profile** — Claude skills, modules, plugins; MCP gateway and structure rules as installable external plugins.
-
-## Project Structure
-
-```
-metarepo/
-├── Cargo.toml              # Workspace configuration
-├── docs/                   # Architecture, product identity, plugin docs
-│   ├── PRODUCT.md          # Dual-surface product boundaries
-│   ├── ARCHITECTURE.md
-│   └── history/            # Archived plans
-├── meta-core/              # Shared plugin interfaces + TUI primitives
-├── metarepo-plugin-sdk/    # SDK for authoring external plugins
-├── examples/               # Protocol + manifest plugin templates (Rust/Node/Python/Go/shell)
-├── meta/                   # Core binary (`meta`) and built-in plugins
-└── README.md
-```
-
-## Installation
+[![crates.io](https://img.shields.io/crates/v/metarepo.svg)](https://crates.io/crates/metarepo)
+[![CI](https://github.com/codyaverett/metarepo/actions/workflows/ci.yml/badge.svg)](https://github.com/codyaverett/metarepo/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ```bash
-# Install from source
-cargo install --path meta
+meta git status                      # every repo, one answer
+meta exec --parallel -- npm test     # one command, every repo
+meta wt add feature/login --all      # one branch, a folder in every repo
+```
 
-# Verify installation
+If you have ever typed `for d in */; do (cd "$d" && git pull); done` and felt a little bit of your soul leave your body, this is for you.
+
+## Why
+
+You have more than a couple of repos. They were supposed to stay in sync. They did not.
+
+- One is three branches behind. One has uncommitted changes from a Tuesday you no longer remember.
+- A change that touches four of them means four terminals, four branches and four chances to forget one.
+- Your shell history is a museum of `cd ../other-thing`.
+
+`meta` adds one small file next to your repos that lists them. After that, git commands, shell commands, named scripts and branches fan out across all of them, or just the ones you are standing in, or just the ones you labelled `backend`. Your repos stay exactly as they are: own history, own remotes, own CI. Delete the file and nothing else changes.
+
+## Is this for you?
+
+**Probably yes if**
+
+- you work across three or more repos (microservices, app plus API plus infra, a pile of libraries)
+- you want one status view and one command instead of a loop
+- you want a feature branch to exist in several repos at once, without stashing
+- you run AI coding agents and want each one in its own isolated checkout
+
+**Probably not if**
+
+- you have one or two repos. Plain git is great. Go outside.
+- you need atomic commits across projects, or build caching and affected-only tests. That is a monorepo with Nx, Turborepo or Bazel.
+- nobody on the team opens a terminal.
+
+`meta` coordinates repos. It does not understand your build graph, and it does not open pull requests for you.
+
+## Install
+
+```bash
+cargo install metarepo        # the crate is metarepo, the command is meta
 meta --version
 ```
 
-> **Development:** Use `cargo run --bin meta --` to run from source without installing (e.g., `cargo run --bin meta -- git status`).
+No Rust toolchain? Grab a prebuilt binary for macOS, Linux or Windows from the [releases page](https://github.com/codyaverett/metarepo/releases), unpack it, and put `meta` on your `PATH`.
 
-## Quick Start
+From a clone of this repo: `cargo install --path meta`.
+
+## Five-minute tour
 
 ```bash
-# Initialize a new meta workspace
-meta init
+mkdir acme && cd acme
+meta init                                         # writes .metarepo, the list of your repos
 
-# Add projects
-meta repo add frontend https://github.com/user/frontend.git
-meta repo add backend https://github.com/user/backend.git
+meta repo add api git@github.com:acme/api.git     # clone and track
+meta repo add web git@github.com:acme/web.git
+meta repo list                                    # the workspace as a tree
 
-# Pick a config format on init (default: .metarepo / JSON)
-meta init --format yaml      # writes .metarepo.yaml
-meta init --format toml      # writes .metarepo.toml
+meta git status                                   # where does everything stand?
+meta git pull                                     # update the lot
+meta exec --parallel -- npm test                  # any command, every repo, at once
 
-# Use an explicit config file (overrides discovery)
-meta --config ./tools/.metarepo.yaml git status
-
-# Convert between formats
-meta config migrate yaml             # writes .metarepo.yaml; keeps original
-meta config migrate toml --replace   # writes .metarepo.toml; removes original
-
-# Check status across all repositories
-meta git status
-
-# Clone missing repositories defined in .meta
-meta git update
-
-# Clone missing repositories, then pull the rest, in one step
-meta git sync
-
-# Pull / fetch / push / checkout across the fleet
-meta git pull
-meta git fetch
-meta git push
-meta git checkout main
-meta git checkout -b feature/x
-
-# Execute commands across all projects
-meta exec --all npm install
-
-# Run in parallel
-meta exec --all --parallel npm test
-
-# Run scripts defined in .meta
-meta run build
-meta run --list
-
-# Nested workspaces: create one, list them, run a command in just those
-meta ws init teams/payments
-meta ws list
-meta exec --projects "$(meta ws list | paste -sd, -)" -- git status
-
-# Manage worktrees for feature branches (wt is short for worktree)
-meta worktree add feature/new-feature --all
-meta worktree list
-
-# Interactive multi-repo status
-meta status
+meta wt add feature/login --all                   # the same branch, a folder in every repo
 ```
 
-Every multi-project run (`meta exec`, `meta run`, `meta git pull/push/fetch/checkout/sync`,
-`meta repo update`) ends with a results table: one row per project with its
-status (`ok`, `failed`, `skipped`, `cloned`), time, and the most useful output line,
-such as the pull diffstat or the error. Repositories skipped before the run
-(uncommitted changes, no upstream) are listed there with the reason.
+Every multi-repo run ends with one results table, so you never scroll back to find out which repo was the problem:
 
 ```
   Project    Status   Time  Detail
@@ -110,81 +80,74 @@ such as the pull diffstat or the error. Repositories skipped before the run
   1 ok, 2 skipped
 ```
 
-To clone an existing meta workspace:
+Joining a workspace someone else set up is two commands:
 
 ```bash
-meta git clone https://github.com/user/meta-repo.git
-cd meta-repo
-meta git update
+meta git clone https://github.com/acme/workspace.git
+cd workspace && meta git update     # clones every repo listed in the manifest
 ```
 
-## Built-in Plugins
+Want the long version with pictures? Clone this repo and run `make slides` for a 23-slide animated walkthrough.
 
-### Multi-repo CLI (stable)
+> **Heads-up: repos are added "bare-first" by default.** `meta repo add api ...` creates `api/main/` (your default branch) so that other branches can live beside it as `api/feature-login/`. It is lovely once you know, and surprising if you do not. Prefer ordinary clones? Answer "regular" when `repo add` asks, or set `"default_bare": false` in the manifest. See [Worktrees](#worktrees-and-the-bare-first-layout).
 
-| Plugin | Command Pattern | Description |
-|--------|----------------|-------------|
-| **init** | `meta init [--with-skill\|--with-completions\|--all]` | Initialize a meta repository; optional skill and shell completions |
-| **git** | `meta git <clone\|status\|update\|pull\|push\|fetch\|checkout>` | Fleet git operations (bare/worktree-aware) |
-| **repo** (alias `project`) | `meta repo <add\|list\|remove\|rename\|tree\|check\|update\|convert-to-bare\|...>` | Project lifecycle and workspace hygiene |
-| **config** | `meta config <get\|set\|list\|edit>` | Configuration with cascade + interactive TUI |
-| **exec** | `meta exec [flags] <command>` | Execute commands across repositories |
-| **run** | `meta run [flags] <script>` | Run scripts defined in `.meta` (optional TUI picker) |
-| **workspace** (alias `ws`) | `meta workspace <init [name]\|list>` | Initialize a workspace or a nested child workspace; list nested workspaces |
-| **worktree** (alias `wt`) | `meta worktree <add\|remove\|list\|prune\|clean\|repair\|tui>` | Bare-first worktree management |
-| **status** | `meta status` | Interactive multi-repo status dashboard |
+## What you get
 
-### Agent / extension (stable unless marked experimental)
+| | |
+|---|---|
+| **Fleet git** | `meta git status`, `pull`, `push`, `fetch`, `checkout`, `sync`, `clone` across every repo, skipping the ones that are not ready and telling you why |
+| **Run anything** | `meta exec -- <command>` in each repo, in parallel if you like |
+| **Named scripts** | `meta run build`: define a script once in the manifest, run it everywhere |
+| **Directory-aware scope** | commands act on the repo you are in, the folder you are in, or everything at the root |
+| **Labels** | `meta --label backend git pull`: tag repos once, target them forever |
+| **Worktrees** | `meta wt add feature/x --all`: parallel branches as folders, no stashing |
+| **Nested workspaces** | `meta ws init teams/payments`: a team-sized workspace inside an org-sized one |
+| **Status dashboard** | `meta status`: a live, read-only terminal dashboard |
+| **Plugins** | add your own subcommands in any language |
+| **Agent support (opt-in)** | a Claude Code skill, an MCP server, per-agent worktrees |
 
-| Plugin | Command Pattern | Description |
-|--------|----------------|-------------|
-| **skill** | `meta skill <install\|steal\|audit\|search\|add\|...>` | Claude Code skill lifecycle and registry |
-| **module** | `meta module <enable\|disable\|list\|scan\|...>` | Modules bundling plugins + skills |
-| **plugin** | `meta plugin <list\|remove\|update\|verify>` | External plugin management |
-| **rules** | `meta rules <check\|init\|list\|...>` | Project structure rules (external plugin `metarepo-plugin-rules`) |
-| **mcp** | `meta mcp <serve\|add\|list\|...>` | MCP server and gateway (external plugin `metarepo-plugin-mcp`) |
+### How it compares
 
-See [docs/PRODUCT.md](docs/PRODUCT.md) for surface boundaries and [CLI Reference](.claude/skills/meta-tool/SKILL.md) for full flags.
+| Instead of | You get | You give up |
+|---|---|---|
+| a shell loop over folders | scope, parallelism, a results table, skipped-with-a-reason | the quiet pride of a hand-rolled `for` loop |
+| git submodules | repos that stay independent, no pinned SHAs, no detached HEAD surprises | exact cross-repo version pinning |
+| a monorepo | no migration, per-repo history, access control and CI | atomic commits, one build graph |
+| the Node.js [meta](https://github.com/mateodelnorte/meta) tool (the inspiration) | a single binary with no Node runtime, the same `.meta` file format, plus worktrees, labels and plugins | the npm plugin ecosystem |
 
-## Global Flags
+## Everyday use
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--version` | `-v` | Print version information |
-| `--experimental` | `-x` | Enable experimental features (rules, mcp) |
-| `--non-interactive` | | Non-interactive mode: `fail` or `defaults` (for CI) |
-| `--config` | `-c` | Use a specific config file, overriding auto-discovery |
-| `--workspace` | `-w` | Operate on every project, ignoring the current directory |
-| `--root` | | Resolve the outermost enclosing metarepo instead of the nearest one |
-| `--label` | | Only act on repos with this label (comma = any, repeat = all, `@workspace` = nested workspaces) |
-| `--exclude-label` | | Skip repos with any of these labels |
+### Repos and projects are the same thing
 
-## Directory-aware scope
-
-Multi-project commands (`git status`/`pull`/`push`/`fetch`/`checkout`, `exec`, `run`,
-`project list`/`tree`, and `worktree`) act on a set of projects determined by your
-current directory:
-
-- **inside a project** → just that project
-- **inside a subdirectory** that contains projects → the projects beneath it
-- **at the workspace root** → every project
+`meta repo` and `meta project` are the same command. A repo is a project and a project is a repo. Use whichever word your brain reaches for.
 
 ```bash
-cd plugins/
-meta git status        # only the projects under plugins/
-meta -w git status     # every project (run from anywhere)
+meta repo add api git@github.com:acme/api.git
+meta repo add api git@github.com:acme/api.git --depth 1   # shallow clone
+meta repo list
+meta repo remove api
+meta repo check                                           # report workspace drift
 ```
 
-Use `--workspace`/`-w` to force the whole workspace from anywhere, or
-`--project`/`--projects` (where supported) to target specific projects. For a
-metarepo nested inside another, `--root` drives the **outermost** one (combine
-with `--workspace` to span all of its projects). Commands that are inherently
-whole-workspace or target a named project — `git clone`/`update`, `project
-add`/`remove`/`rename` — are not directory-scoped.
+### Scope follows where you stand
 
-## Repo labels
+Multi-repo commands work on a set of repos decided by your current directory:
 
-Label repos once, then narrow any multi-repo command to them. Full guide: [docs/LABELS.md](docs/LABELS.md).
+- **inside a repo**: just that repo
+- **inside a folder of repos**: the repos beneath it
+- **at the workspace root**: all of them
+
+```bash
+cd services/
+meta git status        # only the repos under services/
+meta -w git status     # every repo, from anywhere
+```
+
+`--project` / `--projects` pick repos by name. `--root` drives the outermost workspace when workspaces are nested.
+
+### Labels
+
+Label repos once, then narrow any command to them. Full guide: [docs/LABELS.md](docs/LABELS.md).
 
 ```bash
 meta repo label add api backend rust
@@ -197,157 +160,152 @@ meta --exclude-label legacy git pull                   # everything except legac
 meta --label @workspace exec -- meta git status        # only nested workspaces
 ```
 
-## Advanced Configuration
+### Scripts
 
-### Worktree Post-Create Hooks
+Scripts live in the manifest, so the whole team shares them.
 
-Automatically run commands when creating worktrees (e.g., install dependencies):
+```json
+{ "scripts": { "test": "npm test", "build": "npm run build" } }
+```
+
+```bash
+meta run --list
+meta run test
+meta run build --parallel
+meta run --tui          # pick a script and watch per-repo output live
+```
+
+### Worktrees and the bare-first layout
+
+A worktree is a second checkout of the same repo in its own folder, on another branch. No stashing, no "wait, which branch am I on".
+
+```bash
+meta wt add feature/login --all      # create the branch and folder in every repo
+meta wt list
+meta wt remove feature/login --all
+meta wt clean                        # remove worktrees whose branches are merged
+```
+
+By default a repo added through `meta` is laid out like this:
+
+```
+workspace/
+└── api/
+    ├── .git/            bare repository
+    ├── main/            default branch
+    └── feature-login/   another branch, side by side
+```
+
+Set `"default_bare": false` in the manifest (or `"bare": false` per repo) for traditional clones. A `worktree_init` hook can run your install step whenever a worktree is created:
 
 ```json
 {
   "worktree_init": "npm ci",
   "projects": {
-    "frontend": {
-      "url": "git@github.com:user/frontend.git",
-      "worktree_init": "pnpm install && pnpm run setup"
-    },
-    "backend": {
-      "url": "git@github.com:user/backend.git",
-      "worktree_init": "cargo build"
-    }
+    "api": { "url": "git@github.com:acme/api.git", "worktree_init": "cargo build" }
   }
 }
 ```
 
-```bash
-# Creates worktree and automatically runs worktree_init command
-meta worktree add feature/new-feature
+Pass `--no-hooks` to skip it. Details: [docs/WORKTREE.md](docs/WORKTREE.md).
 
-# Skip post-create hooks
-meta worktree add feature/quick-test --no-hooks
-```
-
-### Bare Repository Mode (Default)
-
-All projects use bare repositories by default for cleaner structure:
+### Nested workspaces
 
 ```bash
-meta repo add my-app git@github.com:user/my-app.git
+meta ws init teams/payments     # create a workspace inside this one and register it
+meta ws list
+meta --root -w git status       # from inside a nested workspace, reach everything
 ```
 
-This creates:
-```
-workspace/
-├── my-app/
-│   ├── .git/           # Bare repository
-│   ├── main/           # Default branch worktree
-│   └── feature-1/      # Additional worktrees
-```
+### Shallow clones and whole-org sweeps
 
-**To use traditional clones**, set `"default_bare": false` in `.meta` or `"bare": false` per-project.
-
-See [Worktree Configuration](docs/WORKTREE.md) for detailed documentation.
-
-### Shallow Clones
-
-Pass `--depth <N>` to `meta repo add` or `meta git clone` to limit history
-fetched during clone. The depth is recorded per-project in `.meta`, so a later
-`meta git update` re-clones the same project shallowly too:
-
-```bash
-meta repo add my-app https://github.com/user/my-app.git --depth 1
-meta git clone --depth 1 https://github.com/user/meta-workspace.git
-```
-
-This is handy for pulling an entire GitHub org into a workspace without
-fetching full history for every repo:
+`--depth N` on `meta repo add` or `meta git clone` is remembered per repo, so later re-clones stay shallow. Handy for pulling an entire GitHub org down for an audit:
 
 ```bash
 meta init
 gh repo list ORG --limit 1000 --json name,url --jq '.[] | "\(.name) \(.url)"' \
-  | while read -r name url; do
-      meta repo add "$name" "$url" --depth 1
-    done
+  | while read -r name url; do meta repo add "$name" "$url" --depth 1; done
 ```
 
-Shallow repos accumulate history on a plain pull: git fetches every new
-commit and never moves the shallow boundary. Pass `--shallow` to
-`meta git pull` to re-truncate each project with a stored depth
-(`git fetch --depth N`) after the pull, shrinking history back to the
-configured depth:
+`meta git pull --shallow` re-truncates history after pulling.
 
-```bash
-meta git pull --shallow
-```
+### The manifest
 
-See [Worktree Configuration](docs/WORKTREE.md#shallow-clone-depth) for details
-on combining `--depth` with bare repos and recursive imports.
+`meta init` writes `.metarepo` (JSON). Prefer something else? `meta init --format yaml` or `--format toml`, and `meta config migrate yaml` converts later. Workspaces created by the Node.js tool use `.meta`; that name is read too, so they work unchanged. The repos in your manifest are the only thing `meta` knows about. No hidden state, no database, no daemon.
 
-## Testing
+## Command reference
 
-```bash
-cargo test
-```
+| Command | What it does |
+|---|---|
+| `meta init [--with-skill\|--with-completions\|--all]` | create or repair a workspace; optional shell completions and agent skill |
+| `meta repo <add\|list\|remove\|rename\|label\|check\|update\|convert-to-bare>` | manage the repos in the workspace (alias: `project`) |
+| `meta git <clone\|status\|update\|sync\|pull\|push\|fetch\|checkout\|branch>` | git across the fleet |
+| `meta exec [flags] -- <command>` | run a shell command in each repo |
+| `meta run [flags] <script>` | run a script from the manifest |
+| `meta worktree <add\|list\|remove\|clean\|prune\|repair\|tui>` | worktrees across repos (alias: `wt`) |
+| `meta workspace <init [name]\|list>` | workspaces and nested workspaces (alias: `ws`) |
+| `meta status` | interactive status dashboard |
+| `meta config <get\|set\|list\|edit\|migrate>` | read and change configuration |
+| `meta plugin <install\|list\|verify\|update\|remove>` | manage external plugins |
+| `meta skill`, `meta module` | agent skills and plugin-plus-skill bundles (opt-in) |
 
-## Contributing
+Global flags:
 
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+| Flag | Meaning |
+|---|---|
+| `-w`, `--workspace` | act on every repo, ignoring the current directory |
+| `--root` | use the outermost enclosing workspace |
+| `--label`, `--exclude-label` | narrow to, or skip, repos by label |
+| `-c`, `--config <path>` | use a specific config file |
+| `--non-interactive <fail\|defaults>` | never prompt (for CI) |
+| `-x`, `--experimental` | enable experimental features |
 
-### Quick Issue Creation
+`meta <command> --help` has the full story for each one, with examples.
 
-```bash
-make issue-bug       # Bug report with prompts
-make issue-feature   # Feature request with prompts
-make issue-idea      # Quick idea capture
-make list-issues     # View recent issues
-```
+## For people who work with AI agents
 
-All scripts support JSON input and silent mode for automation. See [.github/scripts/README.md](.github/scripts/README.md).
+Entirely optional. Nothing here is needed to use the commands above.
 
-### Web Interface
+- `meta init --with-skill` installs a Claude Code skill that teaches an agent the CLI.
+- One worktree per agent task (`meta wt add fix/cache --all`) means parallel sessions never trip over each other.
+- The `mcp` plugin exposes `meta` to any MCP-capable harness.
 
-Create issues at [github.com/caavere/metarepo/issues/new/choose](https://github.com/caavere/metarepo/issues/new/choose).
+See [docs/HARNESS_INTEGRATION.md](docs/HARNESS_INTEGRATION.md) and [docs/PRODUCT.md](docs/PRODUCT.md).
 
-### Pre-commit Hooks
+## Extending
 
-Install pre-commit hooks for automatic code quality checks:
+Add your own subcommands without touching this codebase:
 
-```bash
-make install-hooks
-```
+- **Manifest plugin**: any executable plus a small manifest. Shell, Python, Go, whatever you have.
+- **Protocol plugin**: a subprocess speaking JSON over stdio, with structured access to the workspace. There is a Rust SDK.
+- **Module**: a repo that bundles a plugin with the agent skills that drive it.
 
-Hooks auto-format code, run clippy, check for merge conflicts, validate config files, and more. See [CONTRIBUTING.md](CONTRIBUTING.md#pre-commit-hooks) for full details on what the hooks do, troubleshooting, and bypassing.
-
-### Pull Requests
-
-1. Fork and clone the repository
-2. Install pre-commit hooks: `make install-hooks`
-3. Create a feature branch
-4. Make your changes with clear commit messages (commitizen format)
-5. Submit a pull request
-
-### Security
-
-For security vulnerabilities, please follow our [Security Policy](SECURITY.md). **Do not** create public issues for security concerns.
-
-## Compatibility
-
-- Compatible `.meta` file format with Node.js version
-- Similar command-line interface structure
-- Core workflow compatibility verified
+Start with [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) and the templates in [examples/](examples/).
 
 ## Documentation
 
-- [CLI Reference](.claude/skills/meta-tool/SKILL.md) - Full command reference (source of truth)
-- [Architecture](docs/ARCHITECTURE.md) - System design and structure
-- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Development roadmap
-- [Plugin Development](docs/PLUGIN_DEVELOPMENT.md) - Guide for creating external plugins (SDK quick start, install, security, testing)
-- [Plugin Protocol v1](docs/PLUGIN_PROTOCOL_V1.md) - External-plugin wire protocol specification
-- [Harness Integration](docs/HARNESS_INTEGRATION.md) - Making AI agent harnesses (Claude Code, opencode, MCP clients, a custom TUI) fluent in metarepo
-- [Rules System](docs/RULES.md) - Defining project rules and metadata
-- [Worktree Configuration](docs/WORKTREE.md) - Advanced worktree features and configuration
-- [Shell Completions](docs/SHELL_COMPLETIONS.md) - Generating and installing tab-completion scripts
-- [Testing Guidelines](docs/qa/) - QA and testing strategy
-- [Security Testing](docs/security/) - Security testing strategy
-- [Enhancement Ideas](docs/ENHANCEMENT_IDEAS.md) - Future improvement ideas
-- [TODO & Future Ideas](docs/TODO.md) - Planned features and improvement ideas
+- [CLI reference](.claude/skills/meta-tool/SKILL.md): every command and flag
+- [Labels](docs/LABELS.md) · [Worktrees](docs/WORKTREE.md) · [Disabling repos](docs/DISABLING_PROJECTS.md) · [Config formats](docs/CONFIG_FORMATS.md) · [Shell completions](docs/SHELL_COMPLETIONS.md)
+- [Plugin development](docs/PLUGIN_DEVELOPMENT.md) · [Plugin protocol](docs/PLUGIN_PROTOCOL_V1.md) · [Modules](docs/MODULES.md) · [Rules](docs/RULES.md)
+- [Harness integration](docs/HARNESS_INTEGRATION.md) · [MCP gateway](docs/MCP_GATEWAY.md)
+- [Architecture](docs/ARCHITECTURE.md) · [Product boundaries](docs/PRODUCT.md) · [Roadmap ideas](docs/TODO.md)
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+```bash
+git clone https://github.com/codyaverett/metarepo.git && cd metarepo
+make install-hooks      # format, clippy and friends on every commit
+cargo test
+```
+
+- Report a bug or pitch an idea: [new issue](https://github.com/codyaverett/metarepo/issues/new/choose), or `make issue-bug` / `make issue-feature` / `make issue-idea` from a clone.
+- Commits follow Conventional Commits.
+- Found a security problem? Please follow the [security policy](SECURITY.md) rather than opening a public issue.
+
+This repo is itself a meta workspace (see [`.meta`](.meta)), because it would be awkward otherwise.
+
+## License
+
+[MIT](LICENSE)
