@@ -43,7 +43,7 @@ Tone: warm and a little playful, but technical and honest about limits. No marke
 | 21 | not-yet | Not well suited yet (light slide) |
 | 22 | start | Five commands to start (terminal) and the cast |
 
-Slides 1 to 9, 12, 19 and 22 were rebuilt in the redesign; the rest are the earlier slides with the manifest renamed to `.metarepo` and titles normalised.
+Slides 1 to 9, 12, 19 and 22 were rebuilt in the redesign; the other ten were restyled afterwards to match: the cast now also appears on `agents`, `use-cases`, `hub` and `nested` (hub glides into nested), and the tables and limits slides share the newer heading and card styles.
 
 ## Files and the two renderers
 
@@ -100,7 +100,6 @@ Still verify before presenting as fact:
 ## Improvement backlog (suggested, in priority order)
 
 1. Open the republished artifact in Present mode and confirm magic move, builds and the terminal embeds there.
-2. Give the nine older slides (10, 11, 13 to 18, 20, 21) the cast treatment so the characters appear deck-wide.
 3. Add a slide on the plugin protocol (one JSON message exchange) using `docs/PLUGIN_PROTOCOL_V1.md`.
 4. Pull the version badge from `Cargo.toml` at build time instead of the hardcoded "v0.83.0" on the cover.
 5. Add a print/PDF export to `build.py` if the user wants a PDF (embeds flatten to one frame).
