@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- *(repo)* `meta repo` is now the name of the project management command; `meta project` remains as a visible alias, so existing scripts keep working. Help text, hints and docs show `meta repo`.
+- *(repo)* `meta repo` is now the name of the project management command; `meta project` remains as a visible alias, so existing scripts keep working. Help text, hints and docs show `meta repo`. The help now says plainly that a repo and a project are the same thing.
 
 ## [0.83.0] - 2026-11-06
 

@@ -25,15 +25,17 @@ impl ProjectPlugin {
     pub fn create_plugin() -> impl MetaPlugin {
         plugin("repo")
             .version(env!("CARGO_PKG_VERSION"))
-            .description("Project management operations")
+            .description("Manage repos (also called projects) in the workspace")
             .author("Metarepo Contributors")
             .help_description(
                 "Manage the set of repositories tracked in a workspace's .meta file.\n\
                  \n\
-                 A project is an entry under \"projects\" in .meta, mapping a local path\n\
-                 to a git URL (or the literal \"local\" for an in-tree directory). These\n\
-                 commands add, list, update, and remove those entries, keeping the .meta\n\
-                 file and the working tree in sync.\n\
+                 Repo and project mean the same thing here: a repo is a project and a\n\
+                 project is a repo. Each one is an entry under \"projects\" in .meta, mapping\n\
+                 a local path to a git URL (or the literal \"local\" for an in-tree\n\
+                 directory). These commands add, list, update, and remove those entries,\n\
+                 keeping the .meta file and the working tree in sync. meta repo and\n\
+                 meta project are the same command.\n\
                  \n\
                  Common workflows:\n\
                  \n\
@@ -997,7 +999,7 @@ impl BasePlugin for ProjectPlugin {
     }
 
     fn description(&self) -> Option<&str> {
-        Some("Project management operations")
+        Some("Manage repos (also called projects) in the workspace")
     }
 
     fn author(&self) -> Option<&str> {

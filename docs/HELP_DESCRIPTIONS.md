@@ -12,7 +12,7 @@ as the DESCRIPTION block of a man page, embedded in the subcommand.
 
 ```
 $ meta repo --help
-Project management operations
+Manage repos (also called projects) in the workspace
 
 Usage: meta repo [OPTIONS] [COMMAND]
 
@@ -38,8 +38,8 @@ Description:
 `PluginBuilder` and `CommandBuilder` both expose `.help_description(...)`:
 
 ```rust
-plugin("project")
-    .description("Project management operations")        // short, one line (-h)
+plugin("repo")
+    .description("Manage repos (also called projects) in the workspace")        // short, one line (-h)
     .help_description("Manage the set of repositories ...") // long man-page body (--help)
     .command(
         command("add")
