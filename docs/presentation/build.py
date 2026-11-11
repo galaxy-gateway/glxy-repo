@@ -42,5 +42,5 @@ if(['ArrowRight','ArrowDown','PageDown',' '].includes(k))go(i+1);else if(['Arrow
 else if(k=='n'){{showNotes=!showNotes;go(i)}}else if(k=='f')document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}});
 addEventListener('click',e=>go(e.clientX>innerWidth/2?i+1:i-1));fit();go(i);
 </script></body></html>"""
-(d / "index.html").write_text(html)
+(d / "index.html").write_text(html + "\n")
 print("wrote", d / "index.html", len(deck["order"]), "slides")
