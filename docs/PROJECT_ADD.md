@@ -1,9 +1,9 @@
 # meta repo add: confirmation and interrupt safety
 
-Tracked in [#179](https://github.com/codyaverett/metarepo/issues/179),
-[#180](https://github.com/codyaverett/metarepo/issues/180),
-[#181](https://github.com/codyaverett/metarepo/issues/181) and
-[#182](https://github.com/codyaverett/metarepo/issues/182).
+Tracked in [#179](https://github.com/galaxy-gateway/glxy-repo/issues/179),
+[#180](https://github.com/galaxy-gateway/glxy-repo/issues/180),
+[#181](https://github.com/galaxy-gateway/glxy-repo/issues/181) and
+[#182](https://github.com/galaxy-gateway/glxy-repo/issues/182).
 
 ## Option review
 

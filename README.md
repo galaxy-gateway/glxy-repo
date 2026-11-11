@@ -3,7 +3,7 @@
 **One workspace for all your git repos.** A fast Rust CLI that lets you treat a folder full of independent repositories as a single thing, without merging them into a monorepo.
 
 [![crates.io](https://img.shields.io/crates/v/metarepo.svg)](https://crates.io/crates/metarepo)
-[![CI](https://github.com/codyaverett/metarepo/actions/workflows/ci.yml/badge.svg)](https://github.com/codyaverett/metarepo/actions/workflows/ci.yml)
+[![CI](https://github.com/galaxy-gateway/glxy-repo/actions/workflows/ci.yml/badge.svg)](https://github.com/galaxy-gateway/glxy-repo/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ```bash
@@ -48,7 +48,7 @@ cargo install metarepo        # the crate is metarepo, the command is meta
 meta --version
 ```
 
-No Rust toolchain? Grab a prebuilt binary for macOS, Linux or Windows from the [releases page](https://github.com/codyaverett/metarepo/releases), unpack it, and put `meta` on your `PATH`.
+No Rust toolchain? Grab a prebuilt binary for macOS, Linux or Windows from the [releases page](https://github.com/galaxy-gateway/glxy-repo/releases), unpack it, and put `meta` on your `PATH`.
 
 From a clone of this repo: `cargo install --path meta`.
 
@@ -295,12 +295,12 @@ Start with [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) and the temp
 Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```bash
-git clone https://github.com/codyaverett/metarepo.git && cd metarepo
+git clone https://github.com/galaxy-gateway/glxy-repo.git && cd glxy-repo
 make install-hooks      # format, clippy and friends on every commit
 cargo test
 ```
 
-- Report a bug or pitch an idea: [new issue](https://github.com/codyaverett/metarepo/issues/new/choose), or `make issue-bug` / `make issue-feature` / `make issue-idea` from a clone.
+- Report a bug or pitch an idea: [new issue](https://github.com/galaxy-gateway/glxy-repo/issues/new/choose), or `make issue-bug` / `make issue-feature` / `make issue-idea` from a clone.
 - Commits follow Conventional Commits.
 - Found a security problem? Please follow the [security policy](SECURITY.md) rather than opening a public issue.
 

@@ -5,8 +5,8 @@ edition = "2021"
 description = "Project structure validation and enforcement for metarepo workspaces as an external plugin: directory, component, naming, size, security, and dependency rules with auto-fix"
 authors = ["Metarepo Contributors"]
 license = "MIT"
-repository = "https://github.com/codyaverett/metarepo"
-homepage = "https://github.com/codyaverett/metarepo"
+repository = "https://github.com/galaxy-gateway/glxy-repo"
+homepage = "https://github.com/galaxy-gateway/glxy-repo"
 keywords = ["metarepo", "rules", "lint", "plugin", "monorepo"]
 categories = ["development-tools", "command-line-utilities"]
 

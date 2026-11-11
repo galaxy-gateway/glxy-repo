@@ -5,8 +5,8 @@ edition = "2021"
 description = "MCP server and gateway for metarepo as an external plugin: expose a workspace over the Model Context Protocol and front downstream MCP servers with progressive disclosure"
 authors = ["Metarepo Contributors"]
 license = "MIT"
-repository = "https://github.com/codyaverett/metarepo"
-homepage = "https://github.com/codyaverett/metarepo"
+repository = "https://github.com/galaxy-gateway/glxy-repo"
+homepage = "https://github.com/galaxy-gateway/glxy-repo"
 keywords = ["metarepo", "mcp", "plugin", "meta", "monorepo"]
 categories = ["development-tools", "command-line-utilities"]
 

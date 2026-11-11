@@ -620,6 +620,6 @@ To contribute to the rules system:
 ## Support
 
 - **Documentation**: This file and `meta rules docs`
-- **Issues**: [GitHub Issues](https://github.com/codyaverett/metarepo/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/codyaverett/metarepo/discussions)
+- **Issues**: [GitHub Issues](https://github.com/galaxy-gateway/glxy-repo/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/galaxy-gateway/glxy-repo/discussions)
 - **Examples**: See `examples/` directory in the repository

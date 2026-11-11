@@ -195,7 +195,7 @@ Skill and config polish through mid/late July releases. Notable themes in the
 - *(init)* multi-format config (JSON/YAML/TOML), idempotent init
 - *(worktree)* context-aware commands, path repair
 
-## [0.17.0](https://github.com/codyaverett/metarepo/compare/v0.13.0...v0.17.0) - 2026-05-14
+## [0.17.0](https://github.com/galaxy-gateway/glxy-repo/compare/v0.13.0...v0.17.0) - 2026-05-14
 
 ### Added
 
@@ -203,7 +203,7 @@ Skill and config polish through mid/late July releases. Notable themes in the
 - *(worktree)* repair command for moved worktrees; context-aware commands
 - *(security)* harden config and plugin trust boundaries (v0.14.0)
 
-## [0.13.0](https://github.com/codyaverett/metarepo/compare/v0.12.0...v0.13.0) - 2026-04-23
+## [0.13.0](https://github.com/galaxy-gateway/glxy-repo/compare/v0.12.0...v0.13.0) - 2026-04-23
 
 ### Added
 

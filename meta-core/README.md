@@ -1,6 +1,6 @@
 # metarepo-core
 
-Core library for building [metarepo](https://github.com/codyaverett/metarepo) plugins. This crate provides the essential interfaces and types needed to create custom plugins that extend the metarepo CLI functionality.
+Core library for building [metarepo](https://github.com/galaxy-gateway/glxy-repo) plugins. This crate provides the essential interfaces and types needed to create custom plugins that extend the metarepo CLI functionality.
 
 ## Overview
 
@@ -75,13 +75,13 @@ The `MetaPlugin` trait is the main interface that all plugins must implement:
 pub trait MetaPlugin: Send + Sync {
     /// Returns the plugin name (used for command routing)
     fn name(&self) -> &str;
-    
+
     /// Register CLI commands for this plugin
     fn register_commands(&self, app: Command) -> Command;
-    
+
     /// Handle a command for this plugin
     fn handle_command(&self, matches: &ArgMatches, config: &RuntimeConfig) -> Result<()>;
-    
+
     /// Returns true if this plugin is experimental (default: false)
     fn is_experimental(&self) -> bool {
         false
@@ -128,7 +128,7 @@ Methods for working with configurations:
 
 ## Complete Example
 
-For a complete working example of a metarepo plugin, see the [metarepo-plugin-example](https://github.com/codyaverett/metarepo/tree/main/examples/metarepo-plugin-example) in the main repository.
+For a complete working example of a metarepo plugin, see the [metarepo-plugin-example](https://github.com/galaxy-gateway/glxy-repo/tree/main/examples/metarepo-plugin-example) in the main repository.
 
 This example demonstrates:
 - Command registration with subcommands and arguments
@@ -223,12 +223,12 @@ use my_metarepo_plugin::MyPlugin;
 
 fn main() -> Result<()> {
     let plugin = MyPlugin;
-    
+
     let app = Command::new("test-plugin");
     let app = plugin.register_commands(app);
-    
+
     let matches = app.get_matches();
-    
+
     // Create a test runtime config
     let config = RuntimeConfig {
         meta_config: MetaConfig::default(),
@@ -236,9 +236,9 @@ fn main() -> Result<()> {
         meta_file_path: None,
         experimental: false,
     };
-    
+
     plugin.handle_command(&matches, &config)?;
-    
+
     Ok(())
 }
 ```
@@ -285,10 +285,10 @@ fn handle_command(&self, matches: &ArgMatches, config: &RuntimeConfig) -> Result
     let project_path = matches
         .get_one::<String>("path")
         .ok_or_else(|| anyhow!("Project path is required"))?;
-    
+
     std::fs::read_dir(project_path)
         .context("Failed to read project directory")?;
-    
+
     Ok(())
 }
 ```
@@ -301,7 +301,7 @@ Once your plugin is built, it can be integrated with the metarepo CLI in several
 2. **Dynamic plugins**: Load at runtime (requires dynamic loading support)
 3. **External plugins**: Run as separate processes communicating via IPC
 
-Refer to the [main metarepo documentation](https://github.com/codyaverett/metarepo) for details on plugin integration.
+Refer to the [main metarepo documentation](https://github.com/galaxy-gateway/glxy-repo) for details on plugin integration.
 
 ## API Stability
 
@@ -309,15 +309,15 @@ The `metarepo-core` API follows semantic versioning. The `MetaPlugin` trait and 
 
 ## Contributing
 
-Contributions are welcome! Please see the [main repository](https://github.com/codyaverett/metarepo) for contribution guidelines.
+Contributions are welcome! Please see the [main repository](https://github.com/galaxy-gateway/glxy-repo) for contribution guidelines.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](https://github.com/codyaverett/metarepo/blob/main/LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://github.com/galaxy-gateway/glxy-repo/blob/main/LICENSE) file for details.
 
 ## Resources
 
-- [Main Repository](https://github.com/codyaverett/metarepo)
-- [Example Plugin](https://github.com/codyaverett/metarepo/tree/main/examples/metarepo-plugin-example)
+- [Main Repository](https://github.com/galaxy-gateway/glxy-repo)
+- [Example Plugin](https://github.com/galaxy-gateway/glxy-repo/tree/main/examples/metarepo-plugin-example)
 - [Documentation](https://docs.rs/metarepo-core)
-- [Issue Tracker](https://github.com/codyaverett/metarepo/issues)
+- [Issue Tracker](https://github.com/galaxy-gateway/glxy-repo/issues)

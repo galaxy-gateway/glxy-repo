@@ -17,7 +17,7 @@ one name for crate and command. Existing users and workspaces keep working.
 - Sibling crates: `metarepo-core`, `metarepo-plugin-sdk`, and the external
   plugins under `plugins/`.
 - Manifest file `.metarepo` (legacy `.meta`); GitHub repo
-  `codyaverett/metarepo`.
+  `galaxy-gateway/glxy-repo` (was `codyaverett/metarepo`).
 - `glxy-repo` and `glxy` were unclaimed on crates.io on 2026-11-10.
 
 ## Decisions
@@ -40,8 +40,8 @@ Recommended defaults; each is the owner's call.
    other glxy projects. Open.
 5. **Leave the manifest names alone** (`.metarepo`, `.meta`) and any config
    paths. No workspace migration.
-6. **GitHub repo:** rename to `glxy-repo`; GitHub redirects the old URL.
-   Open: stay under `codyaverett` or move to the `galaxy-gateway` org.
+6. **GitHub repo:** done 2026-11-11. Transferred from `codyaverett/metarepo`
+   to `galaxy-gateway/glxy-repo`; the old URL redirects.
 
 ## Approach
 

@@ -105,7 +105,7 @@ The automated checks in `.github/workflows/security.yml` (see below) are our cur
 - GitHub Actions across our workflows are pinned to a specific commit SHA rather than a floating tag or branch, so a workflow step cannot be silently repointed to different code
 - Our [threat model](docs/security/threat-model.md) documents what we trust and what mitigations are already in place across the dependency, CI, and release pipeline
 
-A few further hardening steps are planned but not yet implemented, so do not assume they are in place: publishing an SBOM with releases ([#44](https://github.com/codyaverett/metarepo/issues/44)), crates.io trusted publishing via OIDC ([#38](https://github.com/codyaverett/metarepo/issues/38)), vendoring dependencies for release builds ([#35](https://github.com/codyaverett/metarepo/issues/35)), and provenance attestation for release artifacts ([#96](https://github.com/codyaverett/metarepo/issues/96)).
+A few further hardening steps are planned but not yet implemented, so do not assume they are in place: publishing an SBOM with releases ([#44](https://github.com/galaxy-gateway/glxy-repo/issues/44)), crates.io trusted publishing via OIDC ([#38](https://github.com/galaxy-gateway/glxy-repo/issues/38)), vendoring dependencies for release builds ([#35](https://github.com/galaxy-gateway/glxy-repo/issues/35)), and provenance attestation for release artifacts ([#96](https://github.com/galaxy-gateway/glxy-repo/issues/96)).
 
 ### What to Expect
 

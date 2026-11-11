@@ -11,7 +11,7 @@ name = "example"
 version = "0.1.0"
 description = "Example meta module bundling a manifest plugin and its skills"
 author = "metarepo"
-repository = "https://github.com/codyaverett/metarepo"
+repository = "https://github.com/galaxy-gateway/glxy-repo"
 min_meta_version = "0.27.0"
 
 # Plugin(s) this module provides.
