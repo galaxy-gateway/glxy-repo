@@ -101,7 +101,7 @@ Still verify before presenting as fact:
 
 1. Open the republished artifact in Present mode and confirm magic move, builds and the terminal embeds there.
 3. Add a slide on the plugin protocol (one JSON message exchange) using `docs/PLUGIN_PROTOCOL_V1.md`.
-4. Pull the version badge from `Cargo.toml` at build time instead of the hardcoded "v0.83.0" on the cover.
+4. Pull the version badge from `Cargo.toml` at build time instead of the hardcoded "v0.84.0" on the cover.
 5. Add a print/PDF export to `build.py` if the user wants a PDF (embeds flatten to one frame).
 
 ## Rules for the working agent
