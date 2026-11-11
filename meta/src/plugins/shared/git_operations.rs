@@ -98,7 +98,7 @@ fn clone_error(e: git2::Error) -> anyhow::Error {
 }
 
 /// Parse and validate a `--depth <N>` CLI argument value into a shallow-clone
-/// depth, shared by `meta git clone` and `meta project add`.
+/// depth, shared by `meta git clone` and `meta repo add`.
 ///
 /// Returns `Ok(None)` when `raw` is `None` (no `--depth` given). Returns an
 /// error when the value fails to parse as an integer or is not a positive

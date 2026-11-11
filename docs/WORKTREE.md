@@ -297,7 +297,7 @@ and merged-branch cleanup from the TUI are tracked as follow-ups to issue #125
 
 ```bash
 # Add a new project (bare by default)
-meta project add my-app https://github.com/user/my-app.git
+meta repo add my-app https://github.com/user/my-app.git
 ```
 
 This will:
@@ -309,7 +309,7 @@ This will:
 
 ```bash
 # Add as traditional repository
-meta project add my-app https://github.com/user/my-app.git
+meta repo add my-app https://github.com/user/my-app.git
 
 # With configuration:
 {
@@ -435,7 +435,7 @@ When you add a project with `bare: true`:
 # }
 
 # Add the project
-meta project add my-app
+meta repo add my-app
 ```
 
 Output:
@@ -529,7 +529,7 @@ You can convert an existing normal repository to bare format:
 
 ```bash
 # Convert an existing project to bare repository
-meta project convert-to-bare my-app
+meta repo convert-to-bare my-app
 ```
 
 **What it does:**
@@ -602,12 +602,12 @@ git reset --hard HEAD
 
 ### Quick Start: Adding a Shallow Clone
 
-Pass `--depth <N>` to `meta project add` or `meta git clone` to limit how much
+Pass `--depth <N>` to `meta repo add` or `meta git clone` to limit how much
 history is fetched:
 
 ```bash
 # Only fetch the most recent commit
-meta project add my-app https://github.com/user/my-app.git --depth 1
+meta repo add my-app https://github.com/user/my-app.git --depth 1
 
 # Clone an entire meta workspace shallowly
 meta git clone --depth 1 https://github.com/user/meta-workspace.git
@@ -657,7 +657,7 @@ meta git pull --shallow
 **Interaction with `--bare`:** `--depth` and `--bare` combine freely; a
 shallow clone can also be a bare repository with worktrees.
 
-**Interaction with recursive/flattened imports:** `meta project add --depth
+**Interaction with recursive/flattened imports:** `meta repo add --depth
 <N>` combined with `--recursive`, `--flatten`, or `--max-depth` prints a
 warning and imports the root project (and any nested projects it discovers)
 in full — shallow depth is not threaded through recursive imports, since
@@ -672,7 +672,7 @@ workspace as lightweight, depth-1 clones:
 meta init
 gh repo list ORG --limit 1000 --json name,url --jq '.[] | "\(.name) \(.url)"' \
   | while read -r name url; do
-      meta project add "$name" "$url" --depth 1
+      meta repo add "$name" "$url" --depth 1
     done
 ```
 
@@ -928,10 +928,10 @@ meta worktree prune --dry-run
 
 ```bash
 # Add project as bare repository
-meta project add <name> <url> --bare
+meta repo add <name> <url> --bare
 
 # Convert existing project to bare
-meta project convert-to-bare <project>
+meta repo convert-to-bare <project>
 ```
 
 ## Troubleshooting

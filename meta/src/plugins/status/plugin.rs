@@ -52,7 +52,7 @@ impl MetaPlugin for StatusPlugin {
             .unwrap_or_else(|| config.working_dir.clone());
         let projects = config.scoped_project_keys();
         if projects.is_empty() {
-            println!("No projects in this workspace. Run 'meta project add' to track one.");
+            println!("No projects in this workspace. Run 'meta repo add' to track one.");
             return Ok(());
         }
         Dashboard::new(base_path, projects).run()

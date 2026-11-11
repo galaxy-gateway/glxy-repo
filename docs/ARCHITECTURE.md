@@ -149,10 +149,10 @@ Manages individual projects within the meta repository.
 - Migrate monorepo directories to separate repositories
 
 **Commands:**
-- `meta project create <path> <repo_url>` - Create new project
-- `meta project import <path> <repo_url>` - Import existing repo
-- `meta project remove <path>` - Remove project from meta repo
-- `meta project migrate <path> <repo_url>` - Migrate directory to separate repo
+- `meta repo create <path> <repo_url>` - Create new project
+- `meta repo import <path> <repo_url>` - Import existing repo
+- `meta repo remove <path>` - Remove project from meta repo
+- `meta repo migrate <path> <repo_url>` - Migrate directory to separate repo
 
 ### Exec Plugin (`meta/src/plugins/exec/`)
 Executes commands across multiple repositories.

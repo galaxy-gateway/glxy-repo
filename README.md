@@ -42,8 +42,8 @@ meta --version
 meta init
 
 # Add projects
-meta project add frontend https://github.com/user/frontend.git
-meta project add backend https://github.com/user/backend.git
+meta repo add frontend https://github.com/user/frontend.git
+meta repo add backend https://github.com/user/backend.git
 
 # Pick a config format on init (default: .metarepo / JSON)
 meta init --format yaml      # writes .metarepo.yaml
@@ -91,7 +91,7 @@ meta status
 ```
 
 Every multi-project run (`meta exec`, `meta run`, `meta git pull/push/fetch/checkout/sync`,
-`meta project update`) ends with a results table: one row per project with its
+`meta repo update`) ends with a results table: one row per project with its
 status (`ok`, `failed`, `skipped`, `cloned`), time, and the most useful output line,
 such as the pull diffstat or the error. Repositories skipped before the run
 (uncommitted changes, no upstream) are listed there with the reason.
@@ -121,7 +121,7 @@ meta git update
 |--------|----------------|-------------|
 | **init** | `meta init [--with-skill\|--with-completions\|--all]` | Initialize a meta repository; optional skill and shell completions |
 | **git** | `meta git <clone\|status\|update\|pull\|push\|fetch\|checkout>` | Fleet git operations (bare/worktree-aware) |
-| **project** | `meta project <add\|list\|remove\|rename\|tree\|check\|update\|convert-to-bare\|...>` | Project lifecycle and workspace hygiene |
+| **repo** (alias `project`) | `meta repo <add\|list\|remove\|rename\|tree\|check\|update\|convert-to-bare\|...>` | Project lifecycle and workspace hygiene |
 | **config** | `meta config <get\|set\|list\|edit>` | Configuration with cascade + interactive TUI |
 | **exec** | `meta exec [flags] <command>` | Execute commands across repositories |
 | **run** | `meta run [flags] <script>` | Run scripts defined in `.meta` (optional TUI picker) |
@@ -209,7 +209,7 @@ meta worktree add feature/quick-test --no-hooks
 All projects use bare repositories by default for cleaner structure:
 
 ```bash
-meta project add my-app git@github.com:user/my-app.git
+meta repo add my-app git@github.com:user/my-app.git
 ```
 
 This creates:
@@ -227,12 +227,12 @@ See [Worktree Configuration](docs/WORKTREE.md) for detailed documentation.
 
 ### Shallow Clones
 
-Pass `--depth <N>` to `meta project add` or `meta git clone` to limit history
+Pass `--depth <N>` to `meta repo add` or `meta git clone` to limit history
 fetched during clone. The depth is recorded per-project in `.meta`, so a later
 `meta git update` re-clones the same project shallowly too:
 
 ```bash
-meta project add my-app https://github.com/user/my-app.git --depth 1
+meta repo add my-app https://github.com/user/my-app.git --depth 1
 meta git clone --depth 1 https://github.com/user/meta-workspace.git
 ```
 
@@ -243,7 +243,7 @@ fetching full history for every repo:
 meta init
 gh repo list ORG --limit 1000 --json name,url --jq '.[] | "\(.name) \(.url)"' \
   | while read -r name url; do
-      meta project add "$name" "$url" --depth 1
+      meta repo add "$name" "$url" --depth 1
     done
 ```
 

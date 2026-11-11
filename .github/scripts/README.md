@@ -558,7 +558,7 @@ alongside them.
 Convert loose local directories into their own git repositories: `git init`, a
 default `.gitignore`, an initial commit, an optional GitHub remote (via `gh`),
 and optional registration as a project in the surrounding metarepo workspace
-(via `meta project add`).
+(via `meta repo add`).
 
 **Single directory:**
 
@@ -594,7 +594,7 @@ echo '{"dir":"./my-folder","remote":true,"public":false,"register":true}' \
 | `--all` | Shorthand for `--scan .` |
 | `--remote`, `--push` | Create a GitHub repo (gh) and push (private) |
 | `--public` | Make the created GitHub repo public (implies `--remote`) |
-| `--no-register` | Skip `meta project add` |
+| `--no-register` | Skip `meta repo add` |
 | `--gitignore-template <name>` | Select a `.gitignore` template (default: `default`) |
 | `--json` | Read input from JSON stdin |
 | `--silent` | Suppress non-error output |

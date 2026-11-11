@@ -84,7 +84,7 @@ pub fn init_child_workspace(name: &str, base_path: &Path) -> Result<()> {
 
     // Register the child in the parent config so it is a tracked project and
     // recursive_import can pull its projects up. Local (non-remote) projects use
-    // the `local:` URL convention already used by `meta project add`.
+    // the `local:` URL convention already used by `meta repo add`.
     let parent_cfg_path = locate_workspace_config(base_path)?;
     let mut parent = MetaConfig::load_from_file(&parent_cfg_path)?;
     if parent.projects.contains_key(name) {
@@ -486,7 +486,7 @@ pub fn import_project_with_options(
                                         "Use --init-git flag to automatically initialize git"
                                             .dimmed()
                                     );
-                                    return Err(anyhow::anyhow!("Directory '{}' exists but is not a git repository.\n\nOptions:\n  1. Use --init-git flag: meta project add {} --init-git\n  2. Initialize manually: cd {} && git init", project_path, project_path, project_path));
+                                    return Err(anyhow::anyhow!("Directory '{}' exists but is not a git repository.\n\nOptions:\n  1. Use --init-git flag: meta repo add {} --init-git\n  2. Initialize manually: cd {} && git init", project_path, project_path, project_path));
                                 }
                             }
                         }
@@ -497,7 +497,7 @@ pub fn import_project_with_options(
                                 "⚠️".yellow(),
                                 "Terminal interaction not available".yellow()
                             );
-                            return Err(anyhow::anyhow!("Directory '{}' exists but is not a git repository.\n\nOptions:\n  1. Use --init-git flag: meta project add {} --init-git\n  2. Initialize manually: cd {} && git init", project_path, project_path, project_path));
+                            return Err(anyhow::anyhow!("Directory '{}' exists but is not a git repository.\n\nOptions:\n  1. Use --init-git flag: meta repo add {} --init-git\n  2. Initialize manually: cd {} && git init", project_path, project_path, project_path));
                         }
                     }
                 };
@@ -521,7 +521,7 @@ pub fn import_project_with_options(
                     );
                     (format!("local:{}", project_path), false)
                 } else {
-                    return Err(anyhow::anyhow!("Directory '{}' exists but is not a git repository.\n\nOptions:\n  1. Use --init-git flag: meta project add {} --init-git\n  2. Initialize manually: cd {} && git init", project_path, project_path, project_path));
+                    return Err(anyhow::anyhow!("Directory '{}' exists but is not a git repository.\n\nOptions:\n  1. Use --init-git flag: meta repo add {} --init-git\n  2. Initialize manually: cd {} && git init", project_path, project_path, project_path));
                 }
             }
         } else {
@@ -652,7 +652,7 @@ pub fn import_project_with_options(
         println!(
             "     {} {}",
             "ℹ".bright_black(),
-            "Run 'meta project check --fix' after adding a remote".dimmed()
+            "Run 'meta repo check --fix' after adding a remote".dimmed()
         );
     } else {
         println!(
@@ -996,7 +996,7 @@ fn get_remote_url(repo: &Repository) -> Result<Option<String>> {
 /// - **Missing directory** (report only): a project in the config whose
 ///   on-disk directory does not exist. Left to the user (clone or remove).
 /// - **Untracked repository** (report only): a top-level git repository on disk
-///   that is not tracked in the config. Suggests `meta project add`.
+///   that is not tracked in the config. Suggests `meta repo add`.
 ///
 /// Stale `.gitignore` lines are intentionally not auto-removed: without
 /// provenance we cannot tell a former project entry from a hand-added ignore.
@@ -1153,7 +1153,7 @@ pub fn check_workspace(base_path: &Path, fix: bool) -> Result<()> {
     }
     for name in &untracked {
         println!(
-            "  {} untracked git repository: {} (run 'meta project add {}')",
+            "  {} untracked git repository: {} (run 'meta repo add {}')",
             "!".yellow(),
             name.cyan(),
             name
@@ -1232,7 +1232,7 @@ pub fn list_projects(base_path: &Path, scope: &[String]) -> Result<()> {
         println!(
             "  {} {}",
             "".dimmed(),
-            "Use 'meta project import' to add projects".dimmed()
+            "Use 'meta repo import' to add projects".dimmed()
         );
         println!();
         return Ok(());
@@ -1383,7 +1383,7 @@ pub fn show_project_tree(base_path: &Path, scope: &[String]) -> Result<()> {
         println!(
             "  {} {}",
             "".dimmed(),
-            "Use 'meta project import' to add projects".dimmed()
+            "Use 'meta repo import' to add projects".dimmed()
         );
         println!();
         return Ok(());

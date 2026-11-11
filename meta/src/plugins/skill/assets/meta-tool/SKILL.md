@@ -1,6 +1,6 @@
 ---
 name: meta-cli
-description: This skill should be used when the user asks about "meta commands", "metarepo", "meta exec", "meta worktree", "meta project", "meta git", "meta run", "managing multiple repositories", "multi-repo management", or discusses workspace operations across git repositories. Provides comprehensive guidance for using the meta CLI tool.
+description: This skill should be used when the user asks about "meta commands", "metarepo", "meta exec", "meta worktree", "meta repo", "meta git", "meta run", "managing multiple repositories", "multi-repo management", or discusses workspace operations across git repositories. Provides comprehensive guidance for using the meta CLI tool.
 version: 0.11.0
 ---
 
@@ -156,21 +156,21 @@ Shared fan-out flags on pull/push/fetch/checkout: `--parallel` (default),
 
 ---
 
-### `meta project` - Project Management
+### `meta repo` - Project Management
 
-#### `meta project add [path] [source]`
+#### `meta repo add [path] [source]`
 
 Add a project to the workspace.
 
 ```bash
 # Clone from URL
-meta project add myproject https://github.com/user/repo.git
+meta repo add myproject https://github.com/user/repo.git
 
 # Import existing local directory as symlink
-meta project add myproject ../external-repo
+meta repo add myproject ../external-repo
 
 # Interactive mode (no arguments)
-meta project add
+meta repo add
 ```
 
 Aliases: `import`, `i`, `a`
@@ -186,67 +186,67 @@ Aliases: `import`, `i`, `a`
 | `--init-git` | | Auto-initialize git if not a repo |
 | `--bare` | | Clone as bare repository with worktree structure |
 
-#### `meta project list`
+#### `meta repo list`
 
 List all projects in the workspace (tree view by default).
 
 ```bash
-meta project list           # Tree view
-meta project list --flat    # Flat list with details
-meta project list --minimal # Just project names
+meta repo list           # Tree view
+meta repo list --flat    # Flat list with details
+meta repo list --minimal # Just project names
 ```
 
 Aliases: `ls`, `l`
 
-#### `meta project tree`
+#### `meta repo tree`
 
 Display project hierarchy as a tree (same as `list` without flags).
 
 ```bash
-meta project tree
+meta repo tree
 ```
 
-#### `meta project update`
+#### `meta repo update`
 
 Update all projects (pull latest changes).
 
 ```bash
-meta project update
-meta project update --recursive
+meta repo update
+meta repo update --recursive
 ```
 
 Aliases: `pull`
 
-#### `meta project remove [name]`
+#### `meta repo remove [name]`
 
 Remove a project from the workspace.
 
 ```bash
-meta project remove myproject
-meta project remove myproject --force  # Force removal, delete directory
+meta repo remove myproject
+meta repo remove myproject --force  # Force removal, delete directory
 ```
 
 Aliases: `rm`, `r`
 
-#### `meta project rename <old_name> <new_name>`
+#### `meta repo rename <old_name> <new_name>`
 
 Rename a project in the workspace.
 
 ```bash
-meta project rename old-name new-name
+meta repo rename old-name new-name
 ```
 
 Aliases: `mv`, `move`
 
-#### `meta project convert-to-bare <project>`
+#### `meta repo convert-to-bare <project>`
 
 Convert a normal repository to bare repository with worktrees.
 
 ```bash
-meta project convert-to-bare myproject
+meta repo convert-to-bare myproject
 ```
 
-#### `meta project check [--fix]`
+#### `meta repo check [--fix]`
 
 Report drift between the workspace config and the working tree, exiting
 non-zero when any is found (usable as a CI or pre-commit lint). Pass `--fix`
@@ -255,8 +255,8 @@ remote-backed projects, and promote any `local:` project whose repo has
 gained a remote (rewrite its `.meta` entry to the remote URL and ignore it).
 
 ```bash
-meta project check          # report drift
-meta project check --fix    # apply the fixable corrections
+meta repo check          # report drift
+meta repo check --fix    # apply the fixable corrections
 ```
 
 ---
@@ -660,8 +660,8 @@ meta git update  # Clone all child repos
 mkdir my-workspace && cd my-workspace
 git init
 meta init
-meta project add frontend https://github.com/org/frontend.git
-meta project add backend https://github.com/org/backend.git
+meta repo add frontend https://github.com/org/frontend.git
+meta repo add backend https://github.com/org/backend.git
 ```
 
 ### Feature Branch Workflow

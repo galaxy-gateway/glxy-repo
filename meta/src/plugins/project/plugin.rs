@@ -23,7 +23,7 @@ impl ProjectPlugin {
 
     /// Create the plugin using the builder pattern
     pub fn create_plugin() -> impl MetaPlugin {
-        plugin("project")
+        plugin("repo")
             .version(env!("CARGO_PKG_VERSION"))
             .description("Project management operations")
             .author("Metarepo Contributors")
@@ -37,9 +37,9 @@ impl ProjectPlugin {
                  \n\
                  Common workflows:\n\
                  \n\
-                   meta project add web https://github.com/acme/web.git   clone and track\n\
-                   meta project list --flat                               show every project\n\
-                   meta project update --recursive                        sync nested repos\n\
+                   meta repo add web https://github.com/acme/web.git   clone and track\n\
+                   meta repo list --flat                               show every project\n\
+                   meta repo update --recursive                        sync nested repos\n\
                  \n\
                  Directories named in the .meta \"ignore\" list (.git, target,\n\
                  node_modules, ...) are skipped during discovery.",
@@ -55,9 +55,9 @@ impl ProjectPlugin {
                                  • Auto-detect repository URLs from existing directories\n\
                                  • Recursively import nested meta repositories\n\n\
                                  Examples:\n\
-                                   meta project add myproject https://github.com/user/repo.git  # Clone new\n\
-                                   meta project add myproject ../external-repo                   # Symlink\n\
-                                   meta project add myproject                                    # Use existing")
+                                   meta repo add myproject https://github.com/user/repo.git  # Clone new\n\
+                                   meta repo add myproject ../external-repo                   # Symlink\n\
+                                   meta repo add myproject                                    # Use existing")
                     .aliases(vec!["import".to_string(), "i".to_string(), "a".to_string()])
                     .help_description(
                         "Track a repository under a workspace path in .meta.\n\
@@ -82,10 +82,10 @@ impl ProjectPlugin {
                          \n\
                          Examples:\n\
                          \n\
-                           meta project add web https://github.com/acme/web.git   clone and track\n\
-                           meta project add libs ../shared-libs                   symlink an external repo\n\
-                           meta project add docs                                  adopt an existing directory\n\
-                           meta project add mono URL --recursive --flatten        import nested repos flat",
+                           meta repo add web https://github.com/acme/web.git   clone and track\n\
+                           meta repo add libs ../shared-libs                   symlink an external repo\n\
+                           meta repo add docs                                  adopt an existing directory\n\
+                           meta repo add mono URL --recursive --flatten        import nested repos flat",
                     )
                     .with_help_formatting()
                     .arg(
@@ -170,9 +170,9 @@ impl ProjectPlugin {
                          \n\
                          Examples:\n\
                          \n\
-                           meta project list             tree view of the workspace\n\
-                           meta project list --flat       names with URLs and status\n\
-                           meta project list --minimal    bare names for scripts",
+                           meta repo list             tree view of the workspace\n\
+                           meta repo list --flat       names with URLs and status\n\
+                           meta repo list --minimal    bare names for scripts",
                     )
                     .with_help_formatting()
                     .aliases(vec!["ls".to_string(), "l".to_string()])
@@ -195,15 +195,15 @@ impl ProjectPlugin {
                     .help_description(
                         "Show the workspace projects as an indented hierarchy.\n\
                          \n\
-                         Equivalent to \"meta project list\" in its default mode, rendering the\n\
+                         Equivalent to \"meta repo list\" in its default mode, rendering the\n\
                          scoped \"projects\" entries as a tree that reflects nested paths. The\n\
                          same overrides apply: --flat switches to a detailed list with URLs\n\
                          and on-disk status, and --minimal prints only project names.\n\
                          \n\
                          Examples:\n\
                          \n\
-                           meta project tree            hierarchy of tracked projects\n\
-                           meta project tree --flat      flat list with details",
+                           meta repo tree            hierarchy of tracked projects\n\
+                           meta repo tree --flat      flat list with details",
                     )
                     .with_help_formatting()
                     .arg(
@@ -237,8 +237,8 @@ impl ProjectPlugin {
                          \n\
                          Examples:\n\
                          \n\
-                           meta project update                 pull every project\n\
-                           meta project update --recursive      also update nested workspaces",
+                           meta repo update                 pull every project\n\
+                           meta repo update --recursive      also update nested workspaces",
                     )
                     .aliases(vec!["pull".to_string()])
                     .with_help_formatting()
@@ -270,8 +270,8 @@ impl ProjectPlugin {
                          \n\
                          Examples:\n\
                          \n\
-                           meta project remove web              untrack web (keep files)\n\
-                           meta project remove web --force       untrack and delete the directory",
+                           meta repo remove web              untrack web (keep files)\n\
+                           meta repo remove web --force       untrack and delete the directory",
                     )
                     .aliases(vec!["rm".to_string(), "r".to_string()])
                     .with_help_formatting()
@@ -313,7 +313,7 @@ impl ProjectPlugin {
                          \n\
                          Examples:\n\
                          \n\
-                           meta project rename web frontend     rename web to frontend",
+                           meta repo rename web frontend     rename web to frontend",
                     )
                     .aliases(vec!["mv".to_string(), "move".to_string()])
                     .with_help_formatting()
@@ -347,7 +347,7 @@ impl ProjectPlugin {
                          \n\
                          Examples:\n\
                          \n\
-                           meta project convert-to-bare web     migrate web to bare layout",
+                           meta repo convert-to-bare web     migrate web to bare layout",
                     )
                     .with_help_formatting()
                     .arg(
@@ -374,7 +374,7 @@ impl ProjectPlugin {
                          \n\
                          Examples:\n\
                          \n\
-                           meta project init services/api    scaffold a nested workspace",
+                           meta repo init services/api    scaffold a nested workspace",
                     )
                     .with_help_formatting()
                     .arg(
@@ -406,8 +406,8 @@ impl ProjectPlugin {
                          \n\
                          Examples:\n\
                          \n\
-                           meta project check           report drift, non-zero exit if any\n\
-                           meta project check --fix      apply the fixable corrections",
+                           meta repo check           report drift, non-zero exit if any\n\
+                           meta repo check --fix      apply the fixable corrections",
                     )
                     .with_help_formatting()
                     .arg(
@@ -568,7 +568,7 @@ fn handle_add(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
                 prompt_text("Project name/path", None, false, non_interactive)?
             } else {
                 return Err(anyhow::anyhow!(
-                    "Project path is required. Use 'meta project add <path>' or run interactively in a terminal"
+                    "Project path is required. Use 'meta repo add <path>' or run interactively in a terminal"
                 ));
             }
         }
@@ -774,7 +774,7 @@ fn handle_remove(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
                 prompt_select("Project to remove", project_names, None, non_interactive)?
             } else {
                 return Err(anyhow::anyhow!(
-                    "Project name is required. Use 'meta project remove <name>' or run interactively in a terminal"
+                    "Project name is required. Use 'meta repo remove <name>' or run interactively in a terminal"
                 ));
             }
         }
@@ -858,13 +858,16 @@ fn handle_check(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
 // Traditional implementation for backward compatibility
 impl MetaPlugin for ProjectPlugin {
     fn name(&self) -> &str {
-        "project"
+        "repo"
     }
 
     fn register_commands(&self, app: clap::Command) -> clap::Command {
         // Delegate to the builder-based plugin
         let plugin = Self::create_plugin();
-        plugin.register_commands(app)
+        // `project` was the original name; keep it working as an alias.
+        plugin
+            .register_commands(app)
+            .mut_subcommand("repo", |c| c.visible_alias("project"))
     }
 
     fn handle_command(&self, matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {

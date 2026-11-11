@@ -60,7 +60,7 @@ Mapped across the harnesses in scope:
 metarepo's useful surface area for an agent:
 
 **Read / context (safe, idempotent):**
-- project list and tree (`meta project list`, `meta project tree`)
+- project list and tree (`meta repo list`, `meta repo tree`)
 - workspace config (`.meta` / `.metarepo`)
 - cross-repo git status (`meta git status`) and diff (`meta git diff`)
 - available scripts (`meta run` targets), worktree list (`meta worktree list`)
@@ -68,7 +68,7 @@ metarepo's useful surface area for an agent:
 **Actions (mutating — gate behind confirmation):**
 - run a command across repos (`meta exec`) or a named script (`meta run`)
 - worktree create / remove (`meta worktree ...`)
-- project add / remove (`meta project ...`)
+- project add / remove (`meta repo ...`)
 - git clone / update / pull / commit / push (`meta git ...`)
 
 **Guardrails.** metarepo is interactive-by-default but degrades safely: see

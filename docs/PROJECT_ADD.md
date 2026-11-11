@@ -1,4 +1,4 @@
-# meta project add: confirmation and interrupt safety
+# meta repo add: confirmation and interrupt safety
 
 Tracked in [#179](https://github.com/codyaverett/metarepo/issues/179),
 [#180](https://github.com/codyaverett/metarepo/issues/180),
@@ -7,7 +7,7 @@ Tracked in [#179](https://github.com/codyaverett/metarepo/issues/179),
 
 ## Option review
 
-In an interactive terminal, `meta project add` asks for the layout (bare +
+In an interactive terminal, `meta repo add` asks for the layout (bare +
 worktree or regular clone) and history (full or shallow with a depth), unless
 `--bare` / `--depth` were given. It then shows the workspace root, resolved
 path, source and layout and offers Proceed / Edit options / Cancel. Edit
@@ -20,7 +20,7 @@ Non-interactive runs (pipes, CI) never prompt.
 Clone and default-worktree steps show a spinner with live object and byte
 counts and elapsed time (plain lines when stdout is not a TTY). Each step
 prints a done line with its duration, and the final line shows the total, for
-example `Successfully added 'x' in 12.4s`. `meta project update` and the git
+example `Successfully added 'x' in 12.4s`. `meta repo update` and the git
 sync commands already print per-project durations in their summary tables.
 
 ## Change report and commit offer

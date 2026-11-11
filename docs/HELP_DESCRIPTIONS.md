@@ -11,10 +11,10 @@ as the DESCRIPTION block of a man page, embedded in the subcommand.
 ## How it renders
 
 ```
-$ meta project --help
+$ meta repo --help
 Project management operations
 
-Usage: meta project [OPTIONS] [COMMAND]
+Usage: meta repo [OPTIONS] [COMMAND]
 
 Options:
   -v, --version  Print version information
@@ -95,7 +95,7 @@ replaces whatever the plugin/module declared for that command:
 }
 ```
 
-- Key `"project"` targets `meta project`; `"project.add"` targets `meta project add`.
+- Key `"project"` targets `meta repo`; `"project.add"` targets `meta repo add`.
 - The override wins over the author-declared description.
 - Works at any depth.
 

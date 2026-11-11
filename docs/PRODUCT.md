@@ -8,7 +8,7 @@ The origin and primary promise: manage many git repositories as one workspace.
 
 | Area | Role |
 |------|------|
-| `meta init` / `meta project` | Workspace and project lifecycle |
+| `meta init` / `meta repo` | Workspace and project lifecycle |
 | `meta git` | Fleet git ops: clone, status, update, pull, **push**, **fetch**, **checkout** |
 | `meta exec` / `meta run` | Fan-out commands and named scripts |
 | `meta worktree` | Bare-first multi-project worktrees |

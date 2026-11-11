@@ -1,6 +1,6 @@
 # Meta Modules
 
-> **Status:** implemented (v1). The `meta module` commands and `meta project add`
+> **Status:** implemented (v1). The `meta module` commands and `meta repo add`
 > discovery described below are live. See [Out of scope](#out-of-scope) for the pieces
 > intentionally deferred.
 
@@ -152,7 +152,7 @@ meta module scan <dir>         Walk a directory and list module manifests found
 
 ## Discovery & lifecycle
 
-1. A repo is added as a project via `meta project add`. After the add, meta checks the
+1. A repo is added as a project via `meta repo add`. After the add, meta checks the
    repo root for a `meta.module.*` manifest.
 2. If found, meta surfaces the module (name, version, the plugins and skills it would wire
    up). In a TTY it **asks for confirmation** before changing anything; non-interactively
@@ -214,7 +214,7 @@ Intentionally deferred:
   [PLUGIN_INTEGRITY.md](PLUGIN_INTEGRITY.md).
 - A `meta module init` scaffolder and a publishing/registry story beyond "it is a git
   repo in the workspace."
-- A `meta sync` discovery sweep — discovery currently hooks `meta project add` only.
+- A `meta sync` discovery sweep — discovery currently hooks `meta repo add` only.
 
 See also: [PLUGIN_DEVELOPMENT.md](PLUGIN_DEVELOPMENT.md),
 [PLUGIN_PROTOCOL_V1.md](PLUGIN_PROTOCOL_V1.md),

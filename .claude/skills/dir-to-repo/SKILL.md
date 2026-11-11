@@ -29,7 +29,7 @@ The script runs a local-first pipeline per directory:
 3. **.gitignore** — writes a default cross-language ignore file, but never clobbers an existing one.
 4. **Initial commit** — `git add -A` + `chore: initialize repository` (uses `--allow-empty` for empty dirs).
 5. **Optional remote** (`--remote`/`--push`) — `gh repo create --source . --push` (private by default, `--public` for public). Requires an authenticated `gh`; if missing/unauthenticated it warns and leaves the local repo intact.
-6. **Optional registration** (default on) — registers the dir as a workspace project via `meta project add <name> --init-git`. Skipped with `--no-register`.
+6. **Optional registration** (default on) — registers the dir as a workspace project via `meta repo add <name> --init-git`. Skipped with `--no-register`.
 
 ## Invocation
 
@@ -76,7 +76,7 @@ Run `.github/scripts/dir-to-repo.sh --help` for the full flag list.
 | `--all` | Shorthand for `--scan .` |
 | `--remote`, `--push` | Create a GitHub repo (gh) and push (private) |
 | `--public` | Make the created GitHub repo public (implies `--remote`) |
-| `--no-register` | Skip `meta project add` |
+| `--no-register` | Skip `meta repo add` |
 | `--gitignore-template <name>` | Select a `.gitignore` template (default: `default`) |
 | `--json` | Read input from JSON stdin |
 | `--silent` | Suppress non-error output (still prints `converted:` summary lines) |
@@ -88,7 +88,7 @@ Run `.github/scripts/dir-to-repo.sh --help` for the full flag list.
   project add` takes a *relative project name* within the workspace (the dir
   containing `.meta`/`.metarepo`), not an arbitrary path. A directory outside the
   workspace is still git-initialized, but registration is skipped with a warning.
-- **Registration needs a workspace config at the root.** `meta project add`
+- **Registration needs a workspace config at the root.** `meta repo add`
   honors any supported config filename (`.meta`, `.metarepo`,
   `.metarepo.yaml`, ...) — see issue #72, now fixed. If no workspace config is
   found, the script warns and continues; the local repo is fully created
@@ -102,12 +102,12 @@ Run `.github/scripts/dir-to-repo.sh --help` for the full flag list.
 - Directory already a repo → skipped (idempotent).
 - Empty directory → still gets a valid initial commit (`--allow-empty`).
 - Directory nested inside an existing repo → refused.
-- Workspace name collision → `meta project add` reports "already exists"; the
+- Workspace name collision → `meta repo add` reports "already exists"; the
   script warns and continues (local repo still created).
 - `gh` not installed/authenticated → remote step skipped, local repo intact.
 
 ## See also
 
 - `.github/scripts/dir-to-repo.sh` — the implementation.
-- `meta project add` — the underlying workspace registration command.
+- `meta repo add` — the underlying workspace registration command.
 - `references/CHANGELOG_NOTES.md` — version history for this skill.

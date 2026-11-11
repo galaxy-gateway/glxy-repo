@@ -90,7 +90,7 @@ impl MetaPlugin for ModulePlugin {
 }
 
 /// Surface a module manifest discovered in `repo` and, in a TTY, offer to enable
-/// it. Called by `meta project add`. Never wires up without explicit consent.
+/// it. Called by `meta repo add`. Never wires up without explicit consent.
 pub fn offer_enable_after_add(
     repo: &std::path::Path,
     config: &RuntimeConfig,
@@ -134,7 +134,7 @@ fn module_command() -> Command {
              in the config's plugins, installs each skill through the audit-gated\n\
              steal path, and records the module so it can be listed and disabled.\n\
              \n\
-             Run with no subcommand to print this help. meta project add discovers a\n\
+             Run with no subcommand to print this help. meta repo add discovers a\n\
              module manifest in a newly added repo and offers to enable it.\n\
              \n\
              Examples:\n  \

@@ -98,6 +98,23 @@ fn project_list_scopes_to_subdirectory() {
 }
 
 #[test]
+fn repo_is_the_command_and_project_its_alias() {
+    if !git_available() {
+        return;
+    }
+    let tmp = workspace();
+    let repo = stdout(&meta_in(tmp.path(), &["repo", "list", "--minimal"]));
+    let project = stdout(&meta_in(tmp.path(), &["project", "list", "--minimal"]));
+    assert!(
+        repo.contains("app") && repo.contains("plugins/a"),
+        "got:\n{repo}"
+    );
+    assert_eq!(repo, project);
+    let help = stdout(&meta_in(tmp.path(), &["repo", "--help"]));
+    assert!(help.contains("meta repo"), "got:\n{help}");
+}
+
+#[test]
 fn project_list_at_root_shows_all() {
     if !git_available() {
         return;
