@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use colored::*;
 use metarepo_core::{MetaConfig, ProjectEntry, ProjectMetadata};
-use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
@@ -240,27 +239,8 @@ pub fn convert_to_bare(project_name: &str, base_path: &Path) -> Result<()> {
     // Step 5: Update .meta configuration
     println!("\n  {} Updating .meta configuration...", "5️⃣".blue());
 
-    // Get project URL
-    let project_url = config
-        .get_project_url(project_name)
-        .ok_or_else(|| anyhow::anyhow!("Could not get project URL"))?;
-
-    // Update to ProjectMetadata format with bare flag
-    let labels = config.effective_labels(project_name, None);
-    config.projects.insert(
-        project_name.to_string(),
-        ProjectEntry::Metadata(ProjectMetadata {
-            labels,
-            url: project_url,
-            aliases: Vec::new(),
-            scripts: HashMap::new(),
-            env: HashMap::new(),
-            worktree_init: None,
-            bare: Some(true),
-            enabled: None,
-            depth: None,
-        }),
-    );
+    // Keep every existing field; only flip the bare flag
+    mark_bare(&mut config, project_name)?;
 
     config.save_to_file(&meta_file_path)?;
     println!("     {} {}", "✅".green(), "Configuration updated".green());
@@ -290,4 +270,77 @@ pub fn convert_to_bare(project_name: &str, base_path: &Path) -> Result<()> {
     println!();
 
     Ok(())
+}
+
+/// Upgrade the entry to metadata form (if needed) and set `bare`, keeping all other fields.
+fn mark_bare(config: &mut MetaConfig, project_name: &str) -> Result<()> {
+    let entry = config
+        .projects
+        .remove(project_name)
+        .ok_or_else(|| anyhow::anyhow!("Could not get project entry"))?;
+    let mut metadata = match entry {
+        ProjectEntry::Metadata(m) => m,
+        ProjectEntry::Url(url) => ProjectMetadata {
+            url,
+            aliases: Vec::new(),
+            scripts: Default::default(),
+            env: Default::default(),
+            worktree_init: None,
+            bare: None,
+            enabled: None,
+            depth: None,
+            labels: Vec::new(),
+        },
+    };
+    metadata.bare = Some(true);
+    config
+        .projects
+        .insert(project_name.to_string(), ProjectEntry::Metadata(metadata));
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mark_bare_preserves_metadata_fields() {
+        let meta = ProjectMetadata {
+            url: "https://example.com/a/b.git".into(),
+            aliases: vec!["b".into()],
+            scripts: [("t".to_string(), "make".to_string())].into(),
+            env: [("K".to_string(), "V".to_string())].into(),
+            worktree_init: Some("npm i".into()),
+            bare: None,
+            enabled: Some(false),
+            depth: Some(1),
+            labels: vec!["backend".into()],
+        };
+        let mut config = MetaConfig::default();
+        config
+            .projects
+            .insert("p".into(), ProjectEntry::Metadata(meta.clone()));
+        mark_bare(&mut config, "p").unwrap();
+        let expected = ProjectMetadata {
+            bare: Some(true),
+            ..meta
+        };
+        assert_eq!(config.projects["p"], ProjectEntry::Metadata(expected));
+    }
+
+    #[test]
+    fn mark_bare_upgrades_url_entry() {
+        let mut config = MetaConfig::default();
+        config
+            .projects
+            .insert("p".into(), ProjectEntry::Url("u".into()));
+        mark_bare(&mut config, "p").unwrap();
+        match &config.projects["p"] {
+            ProjectEntry::Metadata(m) => {
+                assert_eq!(m.url, "u");
+                assert_eq!(m.bare, Some(true));
+            }
+            _ => panic!("expected metadata"),
+        }
+    }
 }

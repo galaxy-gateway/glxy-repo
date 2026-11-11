@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(workspace)* new `meta workspace` command (alias `ws`): `workspace init` initializes the current directory like `meta init`, `workspace init <name>` creates a nested child workspace and registers it in the parent, and `workspace list` prints the nested workspaces in scope one per line so they can be piped into `--projects`
 - *(worktree)* `meta wt` is an alias for `meta worktree`
 
+### Fixed
+
+- *(repo)* `meta repo convert-to-bare` no longer resets the aliases, scripts, env, worktree_init, enabled and depth of the converted repo; it keeps the existing entry and only sets `bare` (#184)
+
 ### Changed
 
 - *(repo)* `meta repo` is now the name of the project management command; `meta project` remains as a visible alias, so existing scripts keep working. Help text, hints and docs show `meta repo`.
