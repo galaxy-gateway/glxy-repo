@@ -395,6 +395,23 @@ meta config validate --file path/to/.meta
 
 ---
 
+### `meta workspace` - Workspaces (alias: `ws`)
+
+Create and list workspaces, including nested ones.
+
+```bash
+meta workspace init                 # initialize the current directory (same as meta init)
+meta ws init teams/payments         # create a nested child workspace and register it here
+meta ws list                        # nested workspaces in scope, one per line
+
+# Run a command in only the nested workspaces
+meta exec --projects "$(meta ws list | paste -sd, -)" -- git status
+```
+
+`meta repo` is the project management command (`meta project` is an alias) and `meta wt` is an alias for `meta worktree`.
+
+---
+
 ### `meta worktree` - Worktree Management
 
 Git worktree management across workspace projects.

@@ -115,6 +115,24 @@ fn repo_is_the_command_and_project_its_alias() {
 }
 
 #[test]
+fn ws_and_wt_aliases_and_nested_workspace_init() {
+    if !git_available() {
+        return;
+    }
+    let tmp = workspace();
+    let wt = stdout(&meta_in(tmp.path(), &["wt", "--help"]));
+    assert!(wt.contains("meta worktree"), "got:\n{wt}");
+
+    assert!(stdout(&meta_in(tmp.path(), &["ws", "list"]))
+        .trim()
+        .is_empty());
+    let init = meta_in(tmp.path(), &["ws", "init", "teams/payments"]);
+    assert!(init.status.success(), "ws init failed: {init:?}");
+    let listed = stdout(&meta_in(tmp.path(), &["workspace", "list"]));
+    assert_eq!(listed.trim(), "teams/payments");
+}
+
+#[test]
 fn project_list_at_root_shows_all() {
     if !git_available() {
         return;

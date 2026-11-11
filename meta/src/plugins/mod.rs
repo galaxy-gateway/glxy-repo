@@ -14,6 +14,7 @@ pub mod run;
 pub mod shared;
 pub mod skill;
 pub mod status;
+pub mod workspace;
 pub mod worktree;
 
 // Re-export plugin structs for convenience
@@ -26,6 +27,7 @@ pub use plugin_manager::PluginManagerPlugin;
 pub use project::ProjectPlugin;
 pub use run::RunPlugin;
 pub use skill::SkillPlugin;
+pub use workspace::WorkspacePlugin;
 pub use worktree::WorktreePlugin;
 
 // Re-export plugin loader

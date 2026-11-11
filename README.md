@@ -82,7 +82,12 @@ meta exec --all --parallel npm test
 meta run build
 meta run --list
 
-# Manage worktrees for feature branches
+# Nested workspaces: create one, list them, run a command in just those
+meta ws init teams/payments
+meta ws list
+meta exec --projects "$(meta ws list | paste -sd, -)" -- git status
+
+# Manage worktrees for feature branches (wt is short for worktree)
 meta worktree add feature/new-feature --all
 meta worktree list
 
@@ -125,7 +130,8 @@ meta git update
 | **config** | `meta config <get\|set\|list\|edit>` | Configuration with cascade + interactive TUI |
 | **exec** | `meta exec [flags] <command>` | Execute commands across repositories |
 | **run** | `meta run [flags] <script>` | Run scripts defined in `.meta` (optional TUI picker) |
-| **worktree** | `meta worktree <add\|remove\|list\|prune\|clean\|repair\|tui>` | Bare-first worktree management |
+| **workspace** (alias `ws`) | `meta workspace <init [name]\|list>` | Initialize a workspace or a nested child workspace; list nested workspaces |
+| **worktree** (alias `wt`) | `meta worktree <add\|remove\|list\|prune\|clean\|repair\|tui>` | Bare-first worktree management |
 | **status** | `meta status` | Interactive multi-repo status dashboard |
 
 ### Agent / extension (stable unless marked experimental)

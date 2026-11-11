@@ -684,7 +684,9 @@ impl MetaPlugin for WorktreePlugin {
     fn register_commands(&self, app: clap::Command) -> clap::Command {
         // Delegate to the builder-based plugin
         let plugin = Self::create_plugin();
-        plugin.register_commands(app)
+        plugin
+            .register_commands(app)
+            .mut_subcommand("worktree", |c| c.visible_alias("wt"))
     }
 
     fn handle_command(&self, matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
