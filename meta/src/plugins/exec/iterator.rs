@@ -53,6 +53,7 @@ pub struct ProjectIterator {
     include_patterns: Vec<String>,
     exclude_patterns: Vec<String>,
     disabled: std::collections::HashSet<String>,
+    label_excluded: std::collections::HashSet<String>,
     include_disabled: bool,
 }
 
@@ -75,6 +76,7 @@ impl ProjectIterator {
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
             disabled: config.disabled_project_keys(),
+            label_excluded: config.label_excluded_keys(),
             include_disabled: false,
         }
     }
@@ -129,6 +131,11 @@ impl ProjectIterator {
     }
 
     fn matches_patterns(&self, project: &ProjectInfo) -> bool {
+        // --label / --exclude-label always apply, even with --include-disabled.
+        if self.label_excluded.contains(&project.name) {
+            return false;
+        }
+
         // Disabled projects are skipped unless explicitly included.
         if !self.include_disabled && self.disabled.contains(&project.name) {
             return false;

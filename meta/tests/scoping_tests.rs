@@ -133,6 +133,73 @@ fn ws_and_wt_aliases_and_nested_workspace_init() {
 }
 
 #[test]
+fn labels_select_repos_across_commands() {
+    if !git_available() {
+        return;
+    }
+    let tmp = workspace();
+    let add = meta_in(
+        tmp.path(),
+        &["repo", "label", "add", "app", "backend", "rust"],
+    );
+    assert!(add.status.success(), "label add failed: {add:?}");
+    assert_eq!(stdout(&add).trim(), "app: backend, rust");
+
+    let list = |args: &[&str]| {
+        let mut full = args.to_vec();
+        full.extend(["repo", "list", "--minimal"]);
+        stdout(&meta_in(tmp.path(), &full))
+    };
+    assert_eq!(list(&["--label", "backend"]).trim(), "app");
+    assert_eq!(
+        list(&["--label", "backend", "--label", "rust"]).trim(),
+        "app"
+    );
+    assert_eq!(list(&["--label", "backend", "--label", "web"]).trim(), "");
+    assert_eq!(list(&["--label", "web,rust"]).trim(), "app");
+    let rest = list(&["--exclude-label", "backend"]);
+    assert!(
+        !rest.contains("app") && rest.contains("plugins/a"),
+        "got:\n{rest}"
+    );
+
+    // Commands that reload the config from disk honor the selection too.
+    let status = stdout(&meta_in(
+        tmp.path(),
+        &["--label", "backend", "git", "status"],
+    ));
+    assert!(
+        status.contains("app:") && !status.contains("plugins/a:"),
+        "got:\n{status}"
+    );
+    let exec = meta_in(
+        tmp.path(),
+        &[
+            "--label",
+            "backend",
+            "exec",
+            "--all",
+            "--include-disabled",
+            "--",
+            "pwd",
+        ],
+    );
+    let exec = format!("{}{}", stdout(&exec), String::from_utf8_lossy(&exec.stderr));
+    assert!(
+        exec.contains("app") && !exec.contains("plugins/a"),
+        "got:\n{exec}"
+    );
+
+    let removed = meta_in(
+        tmp.path(),
+        &["repo", "label", "rm", "app", "rust", "backend"],
+    );
+    assert_eq!(stdout(&removed).trim(), "app: (none)");
+    let reserved = meta_in(tmp.path(), &["repo", "label", "add", "app", "@workspace"]);
+    assert!(!reserved.status.success());
+}
+
+#[test]
 fn project_list_at_root_shows_all() {
     if !git_available() {
         return;

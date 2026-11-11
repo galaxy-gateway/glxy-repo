@@ -61,6 +61,7 @@ fn save_then_load_works_for_each_extension() {
         config.projects.insert(
             "alpha".to_string(),
             ProjectEntry::Metadata(metarepo_core::ProjectMetadata {
+                labels: Default::default(),
                 url: "https://example.com/x.git".to_string(),
                 aliases: vec!["a".to_string()],
                 scripts,

@@ -1316,6 +1316,7 @@ impl ConfigEditor {
             self.config.projects.insert(
                 name.clone(),
                 metarepo_core::ProjectEntry::Metadata(metarepo_core::ProjectMetadata {
+                    labels: Default::default(),
                     url: String::new(),
                     aliases: Vec::new(),
                     scripts: std::collections::HashMap::new(),

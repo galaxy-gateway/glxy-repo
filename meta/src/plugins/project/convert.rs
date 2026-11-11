@@ -246,9 +246,11 @@ pub fn convert_to_bare(project_name: &str, base_path: &Path) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Could not get project URL"))?;
 
     // Update to ProjectMetadata format with bare flag
+    let labels = config.effective_labels(project_name, None);
     config.projects.insert(
         project_name.to_string(),
         ProjectEntry::Metadata(ProjectMetadata {
+            labels,
             url: project_url,
             aliases: Vec::new(),
             scripts: HashMap::new(),

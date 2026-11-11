@@ -855,6 +855,117 @@ fn handle_check(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
     Ok(())
 }
 
+/// `meta repo label`: manage the labels that `--label` / `--exclude-label` select on.
+fn label_command() -> clap::Command {
+    let version = env!("CARGO_PKG_VERSION");
+    let edit = |name: &'static str, about: &'static str| {
+        clap::Command::new(name)
+            .about(about)
+            .version(version)
+            .arg(
+                clap::Arg::new("repo")
+                    .required(true)
+                    .help("Repo name, path, or alias"),
+            )
+            .arg(
+                clap::Arg::new("labels")
+                    .required(true)
+                    .num_args(1..)
+                    .help("One or more labels"),
+            )
+    };
+    clap::Command::new("label")
+        .about("Add, remove, or list repo labels")
+        .version(version)
+        .after_long_help(metarepo_core::format_help_description(
+            "Labels are free-form words stored on a repo in the workspace config. Any\n\
+             multi-repo command can then be narrowed with the global --label and\n\
+             --exclude-label flags. Nested workspaces carry the built-in label @workspace.\n\
+             \n\
+             Examples:\n  \
+               meta repo label add api backend rust       label a repo\n  \
+               meta repo label list                       show every repo's labels\n  \
+               meta --label backend git status            only repos labelled backend\n  \
+               meta --label backend --label rust exec -- cargo test    both labels\n  \
+               meta --label web,docs run build            either label\n  \
+               meta --exclude-label legacy git pull       everything except legacy\n  \
+               meta --label @workspace exec -- meta git status   only nested workspaces",
+        ))
+        .subcommand(edit("add", "Add labels to a repo"))
+        .subcommand(edit("remove", "Remove labels from a repo").visible_alias("rm"))
+        .subcommand(
+            clap::Command::new("list")
+                .visible_alias("ls")
+                .about("List the labels of every repo in scope")
+                .version(version),
+        )
+}
+
+fn handle_label(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
+    let (action, sub) = match matches.subcommand() {
+        Some(("list", _)) | None => {
+            let root = config.meta_root();
+            let keys = config.scoped_project_keys();
+            let width = keys.iter().map(|k| k.len()).max().unwrap_or(0);
+            for key in keys {
+                let labels = config.meta_config.effective_labels(&key, root.as_deref());
+                let shown = if labels.is_empty() {
+                    "-".to_string()
+                } else {
+                    labels.join(", ")
+                };
+                println!("{key:<width$}  {shown}");
+            }
+            return Ok(());
+        }
+        Some(pair) => pair,
+    };
+
+    let path = config
+        .meta_file_path
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("No workspace config found. Run 'meta init' first."))?;
+    // Reload from disk so only what is in the file gets written back.
+    let mut meta = metarepo_core::MetaConfig::load_from_file(path)?;
+    let repo = sub.get_one::<String>("repo").unwrap();
+    let key = meta
+        .resolve_identifier(repo)
+        .filter(|k| meta.projects.contains_key(k))
+        .ok_or_else(|| anyhow::anyhow!("Repo '{repo}' not found in the workspace config"))?;
+    let wanted: Vec<String> = sub.get_many::<String>("labels").unwrap().cloned().collect();
+    if let Some(bad) = wanted
+        .iter()
+        .find(|l| l.is_empty() || l.starts_with('@') || l.contains([',', ' ']))
+    {
+        anyhow::bail!("Invalid label '{bad}': labels cannot be empty, start with @ (reserved for built-ins), or contain commas or spaces");
+    }
+
+    // Labels live on the metadata form; upgrade a bare "name": "url" entry.
+    if let Some(metarepo_core::ProjectEntry::Url(url)) = meta.projects.get(&key) {
+        let upgraded = serde_json::from_value(serde_json::json!({ "url": url }))?;
+        meta.projects
+            .insert(key.clone(), metarepo_core::ProjectEntry::Metadata(upgraded));
+    }
+    let Some(metarepo_core::ProjectEntry::Metadata(metadata)) = meta.projects.get_mut(&key) else {
+        unreachable!("entry was just upgraded to the metadata form");
+    };
+    if action == "add" {
+        metadata.labels.extend(wanted);
+        metadata.labels.sort();
+        metadata.labels.dedup();
+    } else {
+        metadata.labels.retain(|l| !wanted.contains(l));
+    }
+    let now = if metadata.labels.is_empty() {
+        "(none)".to_string()
+    } else {
+        metadata.labels.join(", ")
+    };
+    meta.save_to_file(path)?;
+    println!("{key}: {now}");
+    Ok(())
+}
+
 // Traditional implementation for backward compatibility
 impl MetaPlugin for ProjectPlugin {
     fn name(&self) -> &str {
@@ -865,12 +976,15 @@ impl MetaPlugin for ProjectPlugin {
         // Delegate to the builder-based plugin
         let plugin = Self::create_plugin();
         // `project` was the original name; keep it working as an alias.
-        plugin
-            .register_commands(app)
-            .mut_subcommand("repo", |c| c.visible_alias("project"))
+        plugin.register_commands(app).mut_subcommand("repo", |c| {
+            c.visible_alias("project").subcommand(label_command())
+        })
     }
 
     fn handle_command(&self, matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
+        if let Some(("label", label_matches)) = matches.subcommand() {
+            return handle_label(label_matches, config);
+        }
         // Delegate to the builder-based plugin
         let plugin = Self::create_plugin();
         plugin.handle_command(matches, config)

@@ -16,6 +16,7 @@
     "fan-out",
     "scope",
     "worktrees",
+    "labels",
     "agents",
     "harness",
     "roles",

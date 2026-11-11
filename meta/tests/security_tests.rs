@@ -235,6 +235,7 @@ mod config_safety {
         config.projects.insert(
             "test-project".to_string(),
             ProjectEntry::Metadata(ProjectMetadata {
+                labels: Default::default(),
                 url: "https://github.com/user/repo.git".to_string(),
                 aliases: vec!["tp".to_string()],
                 scripts: {
@@ -332,6 +333,7 @@ mod config_safety {
         config.projects.insert(
             "test-project".to_string(),
             ProjectEntry::Metadata(ProjectMetadata {
+                labels: Default::default(),
                 url: "https://github.com/user/repo.git".to_string(),
                 aliases: vec![],
                 scripts: HashMap::new(),
@@ -376,6 +378,7 @@ mod config_safety {
         config.projects.insert(
             "project-b".to_string(),
             ProjectEntry::Metadata(ProjectMetadata {
+                labels: Default::default(),
                 url: "https://github.com/user/b.git".to_string(),
                 aliases: vec![],
                 scripts: HashMap::new(),
@@ -411,6 +414,7 @@ mod config_safety {
         config.projects.insert(
             "p".to_string(),
             ProjectEntry::Metadata(ProjectMetadata {
+                labels: Default::default(),
                 url: "https://github.com/user/repo.git".to_string(),
                 aliases: vec![],
                 scripts: HashMap::new(),
@@ -699,6 +703,7 @@ mod exec_config_integration {
         config.projects.insert(
             "my-project".to_string(),
             ProjectEntry::Metadata(ProjectMetadata {
+                labels: Default::default(),
                 url: "https://github.com/user/repo.git".to_string(),
                 aliases: vec![],
                 scripts,

@@ -598,6 +598,7 @@ pub fn import_project_with_options(
         config.projects.insert(
             project_path.to_string(),
             ProjectEntry::Metadata(ProjectMetadata {
+                labels: Default::default(),
                 url: final_repo_url.clone(),
                 aliases: Vec::new(),
                 scripts: std::collections::HashMap::new(),

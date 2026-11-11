@@ -200,8 +200,12 @@ fn handle_exec(matches: &ArgMatches, runtime_config: &RuntimeConfig) -> Result<(
             // above, so an alias of a disabled project is caught here too.
             if !selected_projects.is_empty() && !include_disabled {
                 let disabled = config.disabled_project_keys();
+                let label_excluded = config.label_excluded_keys();
                 selected_projects.retain(|key| {
-                    if disabled.contains(key) {
+                    if label_excluded.contains(key) {
+                        eprintln!("Skipping '{key}': not selected by --label/--exclude-label");
+                        false
+                    } else if disabled.contains(key) {
                         eprintln!(
                             "Skipping disabled project '{key}' (use --include-disabled to run it)"
                         );

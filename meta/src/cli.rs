@@ -188,6 +188,22 @@ impl MetarepoCli {
                     .action(clap::ArgAction::SetTrue)
                     .help("Resolve the outermost enclosing metarepo instead of the nearest one")
                     .global(true)
+            )
+            .arg(
+                Arg::new("label")
+                    .long("label")
+                    .value_name("LABELS")
+                    .action(clap::ArgAction::Append)
+                    .help("Only act on repos with this label. Comma-separate for any-of; repeat the flag for all-of. @workspace selects nested workspaces")
+                    .global(true)
+            )
+            .arg(
+                Arg::new("exclude-label")
+                    .long("exclude-label")
+                    .value_name("LABELS")
+                    .action(clap::ArgAction::Append)
+                    .help("Skip repos with any of these labels (comma-separated, repeatable)")
+                    .global(true)
             );
 
         // Apply the standard help layout (Options before Commands) to the whole
@@ -253,6 +269,7 @@ impl MetarepoCli {
         )?;
         // Aggregate declared plugin settings so `meta config` can list them.
         config.settings_catalog = self.registry.borrow().collect_settings();
+        apply_label_selection(&matches, &config);
 
         // Route to appropriate plugin
         match matches.subcommand() {
@@ -309,6 +326,7 @@ impl MetarepoCli {
             discover_root,
         )?;
         config.settings_catalog = self.registry.borrow().collect_settings();
+        apply_label_selection(&matches, &config);
 
         tracing::debug!("Experimental features enabled");
 
@@ -356,6 +374,20 @@ fn resolve_config_override(flag: Option<&String>) -> Option<PathBuf> {
         return Some(PathBuf::from(path));
     }
     std::env::var_os("METAREPO_CONFIG").map(PathBuf::from)
+}
+
+/// Hand the global --label / --exclude-label flags to the core scope rules.
+fn apply_label_selection(matches: &clap::ArgMatches, config: &metarepo_core::RuntimeConfig) {
+    let values = |id: &str| -> Vec<String> {
+        matches
+            .get_many::<String>(id)
+            .map(|v| v.cloned().collect())
+            .unwrap_or_default()
+    };
+    let (include, exclude) = (values("label"), values("exclude-label"));
+    if !include.is_empty() || !exclude.is_empty() {
+        metarepo_core::set_label_selection(include, exclude, config.meta_root());
+    }
 }
 
 #[cfg(test)]

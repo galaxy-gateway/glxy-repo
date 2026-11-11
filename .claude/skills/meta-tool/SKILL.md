@@ -395,6 +395,23 @@ meta config validate --file path/to/.meta
 
 ---
 
+### Repo labels
+
+Label repos, then narrow any multi-repo command with the global `--label` / `--exclude-label` flags.
+
+```bash
+meta repo label add api backend rust     # add labels (remove / rm, list / ls)
+meta --label backend git status          # only repos labelled backend
+meta --label backend --label rust exec -- cargo test   # repeat the flag = all of
+meta --label web,docs run build          # comma list = any of
+meta --exclude-label legacy git pull     # everything except legacy
+meta --label @workspace exec -- meta git status   # built-in label: nested workspaces
+```
+
+Labels narrow the current scope (directory-aware, `-w`, `--all`, `--projects`); they never widen it.
+
+---
+
 ### `meta workspace` - Workspaces (alias: `ws`)
 
 Create and list workspaces, including nested ones.

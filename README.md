@@ -156,6 +156,8 @@ See [docs/PRODUCT.md](docs/PRODUCT.md) for surface boundaries and [CLI Reference
 | `--config` | `-c` | Use a specific config file, overriding auto-discovery |
 | `--workspace` | `-w` | Operate on every project, ignoring the current directory |
 | `--root` | | Resolve the outermost enclosing metarepo instead of the nearest one |
+| `--label` | | Only act on repos with this label (comma = any, repeat = all, `@workspace` = nested workspaces) |
+| `--exclude-label` | | Skip repos with any of these labels |
 
 ## Directory-aware scope
 
@@ -179,6 +181,21 @@ metarepo nested inside another, `--root` drives the **outermost** one (combine
 with `--workspace` to span all of its projects). Commands that are inherently
 whole-workspace or target a named project — `git clone`/`update`, `project
 add`/`remove`/`rename` — are not directory-scoped.
+
+## Repo labels
+
+Label repos once, then narrow any multi-repo command to them. Full guide: [docs/LABELS.md](docs/LABELS.md).
+
+```bash
+meta repo label add api backend rust
+meta repo label list
+
+meta --label backend git status                        # only backend repos
+meta --label backend --label rust exec -- cargo test   # both labels
+meta --label web,docs run build                        # either label
+meta --exclude-label legacy git pull                   # everything except legacy
+meta --label @workspace exec -- meta git status        # only nested workspaces
+```
 
 ## Advanced Configuration
 

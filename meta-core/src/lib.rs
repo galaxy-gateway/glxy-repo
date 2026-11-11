@@ -243,6 +243,43 @@ pub fn scoped_keys(
         .collect()
 }
 
+struct LabelSelection {
+    include: Vec<String>,
+    exclude: Vec<String>,
+    meta_root: Option<PathBuf>,
+}
+
+/// Process-wide label selection, set once by the CLI from the global flags. It
+/// is a process global, not a config field, because several commands reload
+/// the config from disk and must still see the selection. It is deliberately
+/// not an environment variable: a nested `meta` run by `meta exec` must not
+/// inherit the outer selection.
+static LABEL_SELECTION: std::sync::OnceLock<LabelSelection> = std::sync::OnceLock::new();
+
+/// Narrow this process to the projects selected by `--label` (`include`) and
+/// `--exclude-label` (`exclude`); see [`labels_match`]. `meta_root` is used to
+/// detect the built-in `@workspace` label. Only the first call takes effect.
+pub fn set_label_selection(include: Vec<String>, exclude: Vec<String>, meta_root: Option<PathBuf>) {
+    let _ = LABEL_SELECTION.set(LabelSelection {
+        include,
+        exclude,
+        meta_root,
+    });
+}
+
+/// Built-in label carried by every project that is itself a meta workspace.
+pub const WORKSPACE_LABEL: &str = "@workspace";
+
+/// Whether a project with `labels` is selected. Each `include` entry is one
+/// `--label` flag: a comma-separated list where any one label is enough (OR);
+/// every flag must be satisfied (AND). Any label named by an `exclude` entry
+/// (`--exclude-label`, also comma-separated) rules the project out.
+pub fn labels_match(labels: &[String], include: &[String], exclude: &[String]) -> bool {
+    let has = |term: &str| labels.iter().any(|l| l == term.trim());
+    include.iter().all(|flag| flag.split(',').any(has))
+        && !exclude.iter().any(|flag| flag.split(',').any(has))
+}
+
 /// Match `text` against a simple pattern: `*` is a wildcard, otherwise the match
 /// is exact-or-substring. Shared by the `disabled` list and the exec iterator so
 /// both honor the same semantics.
@@ -357,6 +394,10 @@ pub struct ProjectMetadata {
     /// re-clones (`meta git update`) stay shallow. `None` means a full clone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth: Option<i32>,
+    /// Free-form labels used to select this project with the global `--label`
+    /// and `--exclude-label` flags (for example `backend`, `rust`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<String>,
 }
 
 /// The .meta file configuration format
@@ -987,7 +1028,43 @@ impl MetaConfig {
             }
         }
 
+        // C) projects ruled out by --label / --exclude-label for this run.
+        set.extend(self.label_excluded_keys());
+
         set
+    }
+
+    /// Labels of a project: the ones declared in the config plus the built-in
+    /// labels meta assigns itself. Built-ins start with `@`; `@workspace` marks
+    /// a project that is itself a meta workspace (needs `meta_root` to check).
+    pub fn effective_labels(&self, key: &str, meta_root: Option<&Path>) -> Vec<String> {
+        let mut labels = match self.projects.get(key) {
+            Some(ProjectEntry::Metadata(metadata)) => metadata.labels.clone(),
+            _ => Vec::new(),
+        };
+        if meta_root.is_some_and(|root| MetaConfig::config_in_dir(&root.join(key)).is_some()) {
+            labels.push(WORKSPACE_LABEL.to_string());
+        }
+        labels
+    }
+
+    /// Project keys ruled out by this invocation's `--label` / `--exclude-label`
+    /// selection (see [`set_label_selection`]). Empty when no selection is set.
+    /// Folded into [`MetaConfig::disabled_project_keys`], so every command that
+    /// honors disabled projects honors label selection, including commands that
+    /// reload the config from disk.
+    pub fn label_excluded_keys(&self) -> std::collections::HashSet<String> {
+        let Some(sel) = LABEL_SELECTION.get() else {
+            return std::collections::HashSet::new();
+        };
+        self.projects
+            .keys()
+            .filter(|key| {
+                let labels = self.effective_labels(key, sel.meta_root.as_deref());
+                !labels_match(&labels, &sel.include, &sel.exclude)
+            })
+            .cloned()
+            .collect()
     }
 
     /// Whether the given identifier resolves to a disabled project. The
@@ -1356,6 +1433,7 @@ mod tests {
 
     fn metadata_entry(url: &str, aliases: &[&str], enabled: Option<bool>) -> ProjectEntry {
         ProjectEntry::Metadata(ProjectMetadata {
+            labels: Default::default(),
             url: url.to_string(),
             aliases: aliases.iter().map(|s| s.to_string()).collect(),
             scripts: HashMap::new(),
@@ -1870,6 +1948,7 @@ mod tests {
         // No depth was recorded (full clone) — the field must be skipped
         // entirely rather than serialized as `"depth": null`.
         let metadata = ProjectMetadata {
+            labels: Default::default(),
             url: "https://example.com/full-project.git".to_string(),
             aliases: Vec::new(),
             scripts: HashMap::new(),
@@ -1891,5 +1970,38 @@ mod tests {
             .projects
             .insert("full-project".to_string(), ProjectEntry::Metadata(metadata));
         assert_eq!(config.get_project_depth("full-project"), None);
+    }
+}
+
+#[cfg(test)]
+mod label_tests {
+    use super::labels_match;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn repeated_flags_are_and_comma_lists_are_or() {
+        let labels = v(&["backend", "rust"]);
+        assert!(labels_match(&labels, &[], &[]));
+        assert!(labels_match(&labels, &v(&["backend"]), &[]));
+        assert!(labels_match(&labels, &v(&["backend", "rust"]), &[]));
+        assert!(!labels_match(&labels, &v(&["backend", "web"]), &[]));
+        assert!(labels_match(&labels, &v(&["web, rust"]), &[]));
+        assert!(!labels_match(&labels, &v(&["web,docs"]), &[]));
+    }
+
+    #[test]
+    fn exclude_rules_out_any_named_label() {
+        let labels = v(&["backend", "legacy"]);
+        assert!(!labels_match(&labels, &[], &v(&["legacy"])));
+        assert!(!labels_match(
+            &labels,
+            &v(&["backend"]),
+            &v(&["old,legacy"])
+        ));
+        assert!(labels_match(&labels, &v(&["backend"]), &v(&["web"])));
+        assert!(labels_match(&[], &[], &v(&["legacy"])));
     }
 }

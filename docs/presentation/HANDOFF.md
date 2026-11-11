@@ -12,10 +12,10 @@ Tone: warm and a little playful, but technical and honest about limits. No marke
 
 - **The cast.** Six repos (`api`, `web`, `docs`, `infra`, `sdk`, `worker`) are drawn as small coloured characters with blinking eyes (inline SVG, ids `c-<name>`, labels `l-<name>`). They carry the story: tidy on the cover, scattered and worried on `problem`, lined up under the manifest on `idea`, fanned out, scoped, and branched later. Every repo is always labelled by name, so colour is never the only signal.
 - **Magic move.** Slides with `data-transition="magic"` glide the cast to its place on the next slide because the ids match. Currently: cover, problem, fan-out, scope.
-- **Live terminals.** `setup`, `status`, `fan-out`, `worktrees` and `start` hold an `<x-embed>`: a tiny self-contained page that types the command and prints output on a loop. It respects `prefers-reduced-motion` (prints the final state, no typing). Text inside is 26px.
+- **Live terminals.** `setup`, `status`, `fan-out`, `worktrees`, `labels` and `start` hold an `<x-embed>`: a tiny self-contained page that types the command and prints output on a loop. It respects `prefers-reduced-motion` (prints the final state, no typing). Text inside is 26px.
 - **Accessibility.** Plain-language glossary slide (`words`), one idea per slide, 24px minimum text, high-contrast palette, statuses stated in words, reduced-motion support in the viewer and the embeds, speaker notes on every slide.
 
-## Current state (22 slides)
+## Current state (23 slides)
 
 | # | id | Content |
 |---|----|---------|
@@ -28,6 +28,7 @@ Tone: warm and a little playful, but technical and honest about limits. No marke
 | 7 | fan-out | Learn it 3: `meta exec --all --parallel`, results table (terminal) |
 | 8 | scope | Learn it 4: directory-aware scope as nested boxes |
 | 9 | worktrees | Learn it 5: `worktree add --all` (terminal), one branch in every repo |
+| 9a | labels | Learn it 6: `repo label add`, `--label` selection (terminal); sits between worktrees and agents |
 | 10 | agents | Worktree per agent (teal statement slide) |
 | 11 | harness | Four ways to make an agent fluent in meta |
 | 12 | roles | What developers and product managers each get |
@@ -90,7 +91,7 @@ Terminal output on `setup`, `status`, `fan-out` and `worktrees` is **trimmed fro
 Sources for the rest: `README.md`, `docs/PRODUCT.md`, `docs/WORKTREE.md`, `docs/HARNESS_INTEGRATION.md`, `docs/MODULES.md`, `docs/PLUGIN_DEVELOPMENT.md`, `docs/DISABLING_PROJECTS.md`.
 
 Still verify before presenting as fact:
-- **"No tags or profiles for partial cloning"** (not-yet slide): based on a doc grep only.
+- **"No profile for cloning only a subset"** (not-yet slide): labels (docs/LABELS.md) narrow commands but do not affect cloning; the cloning claim is based on a doc grep only.
 - **Shared tooling pattern** (shared-tooling slide): inferred from this repo listing `.claude`, `.github`, `scripts` as projects.
 - **`meta --root -w git status`** (nested slide): flags are real; not run against a real nested workspace.
 - **`setup` success lines** were captured adding local repos; adding by git URL prints clone progress as well.
