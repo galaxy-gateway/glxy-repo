@@ -1,0 +1,14 @@
+<section id="not-for" data-transition="fade" style="background:#e9ebe4;color:#14191f;font-family:'Inter', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:40px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;color:#8a4a12;letter-spacing:2px;text-transform:uppercase">Honest limits</p>
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:600;line-height:1.1;color:#14191f">When not to use it.</h2>
+<table style="font-size:30px;color:#14191f">
+<tr><th style="width:50%;text-align:left">Situation</th><th style="width:50%;text-align:left">Better fit</th></tr>
+<tr><td>One or two repos</td><td>Plain git</td></tr>
+<tr><td>Atomic cross-repo refactors</td><td>A monorepo</td></tr>
+<tr><td>Build graphs, caching, affected-only tests</td><td>Nx, Turborepo or Bazel</td></tr>
+<tr><td>Coordinated package versioning</td><td>Changesets or release tooling</td></tr>
+<tr><td>Teams that never open a terminal</td><td>A hosted platform UI</td></tr>
+</table>
+<p style="font-size:32px;line-height:1.4;color:#3b4650">meta runs git and your commands across repos. It does not understand your build graph or merge changes atomically.</p>
+<aside>Say this plainly; it builds trust. meta is a coordination layer over independent repos, not a build system and not a monorepo substitute.</aside>
+</section>

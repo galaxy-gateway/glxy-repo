@@ -1,0 +1,22 @@
+<section id="fan-out" data-transition="fade" style="background:#0f1419;color:#e8ebe6;font-family:'Inter', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;color:#5ad1b8;letter-spacing:2px;text-transform:uppercase">Daily workflow</p>
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:600;line-height:1.1">Run anything everywhere, or just here.</h2>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:40px">
+<h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#e8ebe6">Fan out</h3>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:26px;line-height:1.5;color:#5ad1b8">meta exec --all<br>&#160;&#160;--parallel npm test</p>
+<p style="font-size:30px;line-height:1.4;color:#9aa7b2">Any command, every repo, in parallel.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:40px">
+<h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#e8ebe6">Named scripts</h3>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:26px;line-height:1.5;color:#5ad1b8">meta run build<br>meta run --list</p>
+<p style="font-size:30px;line-height:1.4;color:#9aa7b2">Scripts live in .meta, so the team shares them.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:20px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:40px">
+<h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#e8ebe6">Directory-aware</h3>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:26px;line-height:1.5;color:#5ad1b8">cd plugins/<br>meta git status</p>
+<p style="font-size:30px;line-height:1.4;color:#9aa7b2">Scope follows your cwd. Use -w for everything.</p>
+</div>
+</div>
+<aside>Scope rule: inside a project it acts on that project; inside a folder of projects it acts on those; at the root it acts on all. The -w flag forces the whole workspace from anywhere.</aside>
+</section>

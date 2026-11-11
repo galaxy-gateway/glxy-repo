@@ -1,0 +1,20 @@
+{
+  "v": 4,
+  "createdOnFiles": {"v": 1, "at": "2026-11-10T12:00:00Z"},
+  "lists": "css",
+  "title": "meta: multi-repo for devs and AI agents",
+  "order": ["cover","problem","manifest","fleet-git","fan-out","worktrees","agents","harness","use-cases","extend","hub","nested","shared-tooling","opt-in","not-for","not-yet","start"],
+  "sections": {
+    "s1": {"description": "The problem and what meta is.", "start": "cover"},
+    "s2": {"description": "The daily workflow across a fleet of repos.", "start": "fleet-git"},
+    "s3": {"description": "Running AI agents on the CLI across many repos.", "start": "agents"},
+    "s4": {"description": "Extending meta, then patterns for composing repos and sharing tooling.", "start": "extend"},
+    "s5": {"description": "Opt-in design, honest limits and getting started.", "start": "opt-in"}
+  },
+  "faces": {
+    "space-grotesk": {"family": "Space Grotesk", "href": "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400..700&display=swap"},
+    "inter": {"family": "Inter", "href": "https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap"},
+    "jetbrains-mono": {"family": "JetBrains Mono", "href": "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap"}
+  },
+  "designSystems": []
+}

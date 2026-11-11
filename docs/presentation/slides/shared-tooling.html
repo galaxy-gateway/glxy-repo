@@ -1,0 +1,23 @@
+<section id="shared-tooling" data-transition="fade" style="background:#0f1419;color:#e8ebe6;font-family:'Inter', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:40px">
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;color:#5ad1b8;letter-spacing:2px;text-transform:uppercase">Patterns 3 and 4</p>
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:600;line-height:1.1">Share tooling through a tooling repo.</h2>
+<p style="font-size:34px;line-height:1.4;color:#9aa7b2">Add your scripts, skills and CI templates as just another project in .meta. This repo does exactly that with its .claude, .github and scripts folders.</p>
+<div style="display:flex;gap:32px">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:40px">
+<h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#e8ebe6">Scripts</h3>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:26px;line-height:1.5;color:#5ad1b8">meta run lint</p>
+<p style="font-size:30px;line-height:1.4;color:#9aa7b2">One named script, defined once, run in every repo.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:40px">
+<h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#e8ebe6">Agent skills</h3>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:26px;line-height:1.5;color:#5ad1b8">meta skill install</p>
+<p style="font-size:30px;line-height:1.4;color:#9aa7b2">Skills live in one repo and install where agents look.</p>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:40px">
+<h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#e8ebe6">Modules</h3>
+<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:26px;line-height:1.5;color:#5ad1b8">meta module enable</p>
+<p style="font-size:30px;line-height:1.4;color:#9aa7b2">A repo can ship a plugin and its skills as one unit.</p>
+</div>
+</div>
+<aside>Pattern 3 is the shared tooling repo; pattern 4 is the module, a repo that bundles a meta plugin plus Claude skills so a project can contribute commands, not just code. Be honest in Q&amp;A: meta does not sync files into child repos for you; it gives you one place to define scripts and skills and one command to run them everywhere.</aside>
+</section>
