@@ -49,7 +49,7 @@ Slides 1 to 9, 12, 19 and 22 were rebuilt in the redesign; the other ten were re
 
 Source of truth is this folder. Edit `slides/<id>.html` and `deck.json` (index: `order`, `sections`, `faces`).
 
-- **Local viewer:** `python3 docs/presentation/build.py` writes `index.html`; open it in a browser. The viewer implements fade, push and magic transitions, all `data-build-in` kinds (auto-played, staggered by order), straight `<x-connector>` arrows, and `<x-embed>` as a sandboxed iframe that restarts when its slide is shown. Keys: arrows, space, Home, End, `n` notes, `f` fullscreen. Click the right or left half to move.
+- **Local viewer:** `make slides` builds and opens the deck (it runs `python3 docs/presentation/build.py`, which writes `index.html`, then opens that file in a browser). The viewer implements fade, push and magic transitions, all `data-build-in` kinds (auto-played, staggered by order), straight `<x-connector>` arrows, and `<x-embed>` as a sandboxed iframe that restarts when its slide is shown. Keys: arrows, space, Home, End, `n` notes, `f` fullscreen. Click the right or left half to move.
 - **claude.ai Slides artifact:** https://claude.ai/artifact/ERpQGeYPdoHxamawL7BH1k (private to the user). It is the published copy; it can drift from this folder. Republish with the Artifact tool using `url` above, `root` = a folder containing `project/deck.json` and `project/slides/*.html`, and `file_path` = `project/deck.json`. Recreate the `project/` layout from this folder each time. Do not publish `index.html`.
 
 ## Slide format rules (the claude.ai subset; keep slides compatible with both)

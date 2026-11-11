@@ -60,6 +60,9 @@ help:
 	@echo "$(YELLOW)Repository Tools:$(NC)"
 	@echo "  $(GREEN)make dir-to-repo DIR=path$(NC) - Convert a directory into a git repo"
 	@echo ""
+	@echo "$(YELLOW)Presentation:$(NC)"
+	@echo "  $(GREEN)make slides$(NC)        - Build the slide deck and open it in a browser"
+	@echo ""
 	@echo "$(YELLOW)Install Paths:$(NC)"
 	@echo "  Binary: $(CYAN)$(INSTALL_PATH)/$(BINARY_NAME)$(NC)"
 	@echo ""
@@ -230,6 +233,13 @@ dir-to-repo:
 	fi
 	@echo "$(CYAN)🌱 Converting $(DIR) into a git repository...$(NC)"
 	@.github/scripts/dir-to-repo.sh "$(DIR)"
+
+# Build the slide deck (docs/presentation) and open the local viewer.
+# Keys in the viewer: arrows or space to move, n for notes, f for fullscreen.
+.PHONY: slides
+slides:
+	@python3 docs/presentation/build.py
+	@open docs/presentation/index.html 2>/dev/null || xdg-open docs/presentation/index.html
 
 # List recent issues
 .PHONY: list-issues
