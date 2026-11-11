@@ -10,11 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - *(labels)* repo labels: `meta repo label add|remove|list` stores labels on a repo, and the global `--label` and `--exclude-label` flags narrow every multi-repo command to matching repos (comma list means any, repeated flag means all). Nested workspaces carry the built-in `@workspace` label. See docs/LABELS.md (#183)
+- *(labels)* the label selection is sent to external plugins over the plugin protocol (`label_include`, `label_exclude` on the runtime config); `meta rules check` honors it
 - *(workspace)* new `meta workspace` command (alias `ws`): `workspace init` initializes the current directory like `meta init`, `workspace init <name>` creates a nested child workspace and registers it in the parent, and `workspace list` prints the nested workspaces in scope one per line so they can be piped into `--projects`
 - *(worktree)* `meta wt` is an alias for `meta worktree`
 
 ### Fixed
 
+- *(worktree)* `meta worktree remove` passed an unsupported quiet flag to git and always failed; it also could not find a worktree by a branch name containing a slash (for example `feature/login`)
+- *(worktree)* `worktree add --all` and `worktree remove --all` now skip disabled repos, as documented, and honor `--label` / `--exclude-label`
+- *(run)* `meta run --all` and `-p`/`--projects` now honor `--label` / `--exclude-label`
 - *(repo)* `meta repo convert-to-bare` no longer resets the aliases, scripts, env, worktree_init, enabled and depth of the converted repo; it keeps the existing entry and only sets `bare` (#184)
 
 ### Changed

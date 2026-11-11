@@ -400,7 +400,17 @@ pub fn add_worktrees(
             select_projects_interactive(config)?
         }
     } else if projects.len() == 1 && projects[0] == "--all" {
-        config.projects.keys().cloned().collect()
+        // --all means every managed project: disabled projects and projects
+        // ruled out by --label / --exclude-label are left alone.
+        let skipped = config.disabled_project_keys();
+        let mut all: Vec<String> = config
+            .projects
+            .keys()
+            .filter(|key| !skipped.contains(*key))
+            .cloned()
+            .collect();
+        all.sort();
+        all
     } else {
         // Resolve project identifiers (could be aliases or basenames)
         let mut selected = Vec::new();
@@ -696,7 +706,7 @@ pub fn remove_worktrees(
             for wt in worktrees {
                 if wt.path.file_name().map(|n| n.to_string_lossy().to_string())
                     == Some(branch.to_string())
-                    || wt.branch == branch
+                    || wt.branch.trim_start_matches("refs/heads/") == branch
                 {
                     projects_with_worktree.push(project_name.clone());
                     break;
@@ -729,7 +739,12 @@ pub fn remove_worktrees(
             select_projects_for_removal(&in_scope, branch)?
         }
     } else if projects.len() == 1 && projects[0] == "--all" {
+        // As in add: --all leaves disabled and label-excluded projects alone.
+        let skipped = config.disabled_project_keys();
         projects_with_worktree
+            .into_iter()
+            .filter(|p| !skipped.contains(p))
+            .collect()
     } else {
         // Resolve project identifiers
         let mut selected = Vec::new();
@@ -771,8 +786,7 @@ pub fn remove_worktrees(
         cmd.arg("-C")
             .arg(&project_path)
             .arg("worktree")
-            .arg("remove")
-            .arg("-q"); // Quiet mode
+            .arg("remove"); // git worktree remove has no quiet flag
 
         if force {
             cmd.arg("--force");
@@ -783,7 +797,7 @@ pub fn remove_worktrees(
             let matching_wt = worktrees.iter().find(|wt| {
                 wt.path.file_name().map(|n| n.to_string_lossy().to_string())
                     == Some(branch.to_string())
-                    || wt.branch == branch
+                    || wt.branch.trim_start_matches("refs/heads/") == branch
             });
 
             if let Some(wt) = matching_wt {

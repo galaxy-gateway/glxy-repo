@@ -81,8 +81,11 @@ the second example shows every repo inside each nested workspace.
 
 - Exclusion is spelled `--exclude-label` rather than a `~` or `!` prefix because
   those characters are expanded by zsh and bash.
-- External plugins (separate processes such as `rules` and `mcp`) do not receive
-  the selection yet.
+- External plugins receive the selection over the plugin protocol
+  (`label_include` / `label_exclude`, see
+  [PLUGIN_PROTOCOL_V1.md](PLUGIN_PROTOCOL_V1.md)), but each command has to use
+  it. Today `meta rules check` honors it; the other `rules` commands and the
+  `mcp` plugin do not.
 - Labels select repos for commands. They do not create clone profiles:
   `meta git update` clones every enabled repo. See
   [DISABLING_PROJECTS.md](DISABLING_PROJECTS.md) to keep repos out of a workspace.

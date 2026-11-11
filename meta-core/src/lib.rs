@@ -267,6 +267,16 @@ pub fn set_label_selection(include: Vec<String>, exclude: Vec<String>, meta_root
     });
 }
 
+/// The `(include, exclude)` selection set by [`set_label_selection`], both empty
+/// when none is set. The host uses this to forward the selection to external
+/// plugins, which are separate processes and cannot see this process global.
+pub fn label_selection() -> (Vec<String>, Vec<String>) {
+    LABEL_SELECTION
+        .get()
+        .map(|s| (s.include.clone(), s.exclude.clone()))
+        .unwrap_or_default()
+}
+
 /// Built-in label carried by every project that is itself a meta workspace.
 pub const WORKSPACE_LABEL: &str = "@workspace";
 

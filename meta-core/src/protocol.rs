@@ -171,6 +171,14 @@ pub struct RuntimeConfigDto {
     /// Defaults to `false` so older hosts/plugins remain compatible.
     #[serde(default)]
     pub scope_workspace: bool,
+    /// The host's `--label` selection (one entry per flag, comma lists inside).
+    /// Defaults to empty so older hosts/plugins remain compatible; applied in
+    /// the plugin process via [`RuntimeConfigDto::apply_label_selection`].
+    #[serde(default)]
+    pub label_include: Vec<String>,
+    /// The host's `--exclude-label` selection. Defaults to empty.
+    #[serde(default)]
+    pub label_exclude: Vec<String>,
 }
 
 impl RuntimeConfigDto {
@@ -179,6 +187,19 @@ impl RuntimeConfigDto {
     /// settings exactly the way in-process ones do.
     pub fn plugin_config<T: serde::de::DeserializeOwned>(&self, name: &str) -> Option<T> {
         self.meta_config.plugin_settings(name)
+    }
+
+    /// Install the host's label selection in this (plugin) process so that
+    /// `scoped_project_keys` and `MetaConfig::disabled_project_keys` honor it.
+    /// No-op when the host sent no selection. The first call wins.
+    pub fn apply_label_selection(&self) {
+        if !self.label_include.is_empty() || !self.label_exclude.is_empty() {
+            crate::set_label_selection(
+                self.label_include.clone(),
+                self.label_exclude.clone(),
+                crate::meta_root_of(self.meta_file_path.as_deref()),
+            );
+        }
     }
 
     /// Resolve the project keys an external plugin should operate on, applying
@@ -195,12 +216,15 @@ impl RuntimeConfigDto {
 
 impl From<&RuntimeConfig> for RuntimeConfigDto {
     fn from(config: &RuntimeConfig) -> Self {
+        let (label_include, label_exclude) = crate::label_selection();
         RuntimeConfigDto {
             meta_config: config.meta_config.clone(),
             working_dir: config.working_dir.clone(),
             meta_file_path: config.meta_file_path.clone(),
             experimental: config.experimental,
             scope_workspace: config.scope_workspace,
+            label_include,
+            label_exclude,
         }
     }
 }
@@ -355,5 +379,19 @@ mod tests {
         assert_eq!(dto.experimental, config.experimental);
         let back: RuntimeConfig = dto.into();
         assert_eq!(back.working_dir, config.working_dir);
+    }
+
+    #[test]
+    fn runtime_config_dto_label_selection_defaults_and_roundtrips() {
+        let json = r#"{"meta_config":{"projects":{}},"working_dir":"/tmp","meta_file_path":null,"experimental":false}"#;
+        let mut dto: RuntimeConfigDto = serde_json::from_str(json).unwrap();
+        assert!(dto.label_include.is_empty() && dto.label_exclude.is_empty());
+
+        dto.label_include = vec!["a,b".into(), "c".into()];
+        dto.label_exclude = vec!["d".into()];
+        let back: RuntimeConfigDto =
+            serde_json::from_str(&serde_json::to_string(&dto).unwrap()).unwrap();
+        assert_eq!(back.label_include, ["a,b", "c"]);
+        assert_eq!(back.label_exclude, ["d"]);
     }
 }
