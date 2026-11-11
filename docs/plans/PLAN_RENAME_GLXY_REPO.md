@@ -35,7 +35,9 @@ Recommended defaults; each is the owner's call.
 4. **Leave the library and plugin crate names alone for now**
    (`metarepo-core`, `metarepo-plugin-sdk`, `metarepo-plugin-*`). Plugin specs
    and lockfiles pin them by name; renaming them is a separate, breaking step.
-   Open.
+   If they are ever renamed, they take the full prefix (`glxy-repo-core`,
+   `glxy-repo-plugin-sdk`), never `glxy-core`, which would collide with the
+   other glxy projects. Open.
 5. **Leave the manifest names alone** (`.metarepo`, `.meta`) and any config
    paths. No workspace migration.
 6. **GitHub repo:** rename to `glxy-repo`; GitHub redirects the old URL.
