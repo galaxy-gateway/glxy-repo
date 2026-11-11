@@ -240,6 +240,8 @@ mod tests {
             meta_file_path: meta_file.map(PathBuf::from),
             experimental: false,
             scope_workspace: false,
+            label_include: Vec::new(),
+            label_exclude: Vec::new(),
         }
     }
 

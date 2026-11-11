@@ -392,7 +392,15 @@ fn handle_check(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
     let projects = if let Some(project_name) = project {
         vec![project_name.clone()]
     } else {
-        config.meta_config.projects.keys().cloned().collect()
+        // Honor --label / --exclude-label (installed by the SDK from the DTO).
+        let excluded = config.meta_config.label_excluded_keys();
+        config
+            .meta_config
+            .projects
+            .keys()
+            .filter(|k| !excluded.contains(*k))
+            .cloned()
+            .collect()
     };
 
     let mut total_violations = 0;

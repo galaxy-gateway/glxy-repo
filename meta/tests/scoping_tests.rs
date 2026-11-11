@@ -200,6 +200,70 @@ fn labels_select_repos_across_commands() {
 }
 
 #[test]
+fn labels_narrow_run_scripts() {
+    if !git_available() {
+        return;
+    }
+    let tmp = workspace();
+    let ws = tmp.path();
+    // A global script that leaves a marker file in each project it runs in.
+    let meta = fs::read_to_string(ws.join(".meta")).unwrap();
+    fs::write(
+        ws.join(".meta"),
+        meta.replacen(
+            "\"projects\"",
+            "\"scripts\": {\"mark\": \"touch ran.txt\"},\n  \"projects\"",
+            1,
+        ),
+    )
+    .unwrap();
+    let add = meta_in(ws, &["repo", "label", "add", "app", "backend"]);
+    assert!(add.status.success(), "label add failed: {add:?}");
+
+    let ran = || -> Vec<&str> {
+        ["app", "plugins/a", "plugins/b"]
+            .into_iter()
+            .filter(|k| ws.join(k).join("ran.txt").exists())
+            .collect()
+    };
+    let reset = || {
+        for k in ["app", "plugins/a", "plugins/b"] {
+            let _ = fs::remove_file(ws.join(k).join("ran.txt"));
+        }
+    };
+
+    for args in [
+        &["--label", "backend", "run", "mark"][..],
+        &["--label", "backend", "run", "--all", "mark"][..],
+    ] {
+        reset();
+        let out = meta_in(ws, args);
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        assert_eq!(ran(), ["app"], "{args:?}");
+    }
+
+    reset();
+    let out = meta_in(ws, &["--exclude-label", "backend", "run", "mark"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(ran(), ["plugins/a", "plugins/b"]);
+
+    // An explicit project that the selection rules out is skipped.
+    reset();
+    meta_in(
+        ws,
+        &[
+            "--exclude-label",
+            "backend",
+            "run",
+            "--project",
+            "app",
+            "mark",
+        ],
+    );
+    assert!(ran().is_empty());
+}
+
+#[test]
 fn project_list_at_root_shows_all() {
     if !git_available() {
         return;

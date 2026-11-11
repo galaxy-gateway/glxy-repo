@@ -288,6 +288,25 @@ definition lives in `metarepo_core::protocol` (re-exported by
 - `meta_file_path` — optional string path; the resolved config file the host
   loaded, or null if running with no config.
 - `experimental` — bool; whether `--experimental` was set.
+- `scope_workspace` — optional bool (default false); whether `--workspace`/`-w`
+  was set.
+- `label_include` — optional array of strings (default empty); the host's
+  `--label` flags, one entry per flag, each a comma list meaning any-of. All
+  entries must match (see `docs/LABELS.md`).
+- `label_exclude` — optional array of strings (default empty); the host's
+  `--exclude-label` flags.
+
+The label fields are additive and `#[serde(default)]`: an older host that omits
+them means "no selection", and an older plugin ignores them. The selection
+lives in a process global of the host, so it does not reach a plugin on its
+own. `metarepo-plugin-sdk` installs it in the plugin process (via
+`RuntimeConfigDto::apply_label_selection`) before each `HandleCommand` and
+before a takeover run; after that, `RuntimeConfigDto::scoped_project_keys()`
+and `MetaConfig::disabled_project_keys()` exclude non-selected projects. A
+plugin that iterates `meta_config.projects` directly does not honor labels
+unless it filters by `label_excluded_keys()`. Because the selection is set once
+per process, a plugin process must serve one host invocation (the host spawns
+a fresh process per `meta` run).
 
 Plugins should treat this as read-only context. There is no facility in v1
 for a plugin to mutate config and have the host pick up the change.

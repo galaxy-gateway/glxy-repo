@@ -113,13 +113,16 @@ pub fn serve_or_takeover<P: Plugin>(
         .map(|v| v == "1")
         .unwrap_or(false);
     if takeover_env || !args.is_empty() {
-        let config = std::env::var("METAREPO_PLUGIN_CONFIG")
+        let config: Option<RuntimeConfigDto> = std::env::var("METAREPO_PLUGIN_CONFIG")
             .ok()
             .map(|json| {
                 serde_json::from_str(&json)
                     .map_err(|e| anyhow::anyhow!("Invalid METAREPO_PLUGIN_CONFIG: {e}"))
             })
             .transpose()?;
+        if let Some(dto) = &config {
+            dto.apply_label_selection();
+        }
         run(TakeoverInvocation { args, config })
     } else {
         serve(plugin)
@@ -185,12 +188,15 @@ fn dispatch<P: Plugin>(plugin: &P, request: PluginRequest) -> PluginResponse {
             command,
             args,
             config,
-        } => match plugin.handle(&command, &args, &config) {
-            Ok(message) => PluginResponse::Success { message },
-            Err(e) => PluginResponse::Error {
-                message: e.to_string(),
-            },
-        },
+        } => {
+            config.apply_label_selection();
+            match plugin.handle(&command, &args, &config) {
+                Ok(message) => PluginResponse::Success { message },
+                Err(e) => PluginResponse::Error {
+                    message: e.to_string(),
+                },
+            }
+        }
     }
 }
 

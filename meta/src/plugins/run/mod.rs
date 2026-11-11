@@ -205,6 +205,10 @@ pub fn run_script(
         selected
     };
 
+    // --label / --exclude-label also narrow --all and explicit -p/--projects.
+    let label_excluded = config.label_excluded_keys();
+    selected_projects.retain(|p| !label_excluded.contains(p));
+
     // Apply filters using ProjectIterator if needed
     if existing_only || git_only {
         let mut iterator = ProjectIterator::new(&config, base_path);
