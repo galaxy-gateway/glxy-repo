@@ -1,21 +1,10 @@
-<section id="extend" data-transition="fade" style="background:#0f1419;color:#e8ebe6;font-family:'Inter', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:40px">
+<section id="extend" data-transition="fade" style="background:#0f1419;color:#e8ebe6;font-family:'Inter', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:24px">
 <p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;color:#5ad1b8;letter-spacing:2px;text-transform:uppercase">Extending meta</p>
-<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:600;line-height:1.1">Add your own commands. Any language</h2>
-<div style="display:flex;gap:32px">
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:40px">
-<h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#5ad1b8">Manifest plugin</h3>
-<p style="font-size:30px;line-height:1.4;color:#e8ebe6">Any executable plus a manifest file that declares its commands. Shell, Python or Go, with no protocol to learn.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:40px">
-<h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#5ad1b8">Protocol plugin</h3>
-<p style="font-size:30px;line-height:1.4;color:#e8ebe6">A subprocess speaking JSON over stdio, with structured access to workspace state. A Rust SDK hides the protocol.</p>
-</div>
-<div style="flex:1;display:flex;flex-direction:column;gap:16px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:40px">
-<h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#5ad1b8">Module</h3>
-<p style="font-size:30px;line-height:1.4;color:#e8ebe6">A repo that bundles a plugin with the Claude skills that drive it, discovered when you add it as a project.</p>
-</div>
-</div>
-<p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;line-height:1.5;color:#5ad1b8">meta plugin install | list | verify | update | remove</p>
-<p style="font-size:32px;line-height:1.4;color:#9aa7b2">Version pinning and optional checksums are built in. The rules and mcp features ship as external plugins in this very workspace.</p>
+<h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:600;line-height:1.1;color:#e8ebe6">Add your own commands. Any language</h2>
+<div style="position:absolute;left:128px;top:330px;width:532px;height:330px;display:flex;flex-direction:column;gap:8px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:28px 32px" data-build-in="rise 1 auto"><h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#5ad1b8">Manifest plugin</h3><p style="font-size:28px;line-height:1.4;color:#e8ebe6">Any executable plus a manifest file that declares its commands. Shell, Python or Go, with no protocol to learn.</p></div>
+<div style="position:absolute;left:694px;top:330px;width:532px;height:330px;display:flex;flex-direction:column;gap:8px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:28px 32px" data-build-in="rise 2 auto"><h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#5ad1b8">Protocol plugin</h3><p style="font-size:28px;line-height:1.4;color:#e8ebe6">A subprocess speaking JSON over stdio, with structured access to workspace state. A Rust SDK hides the protocol.</p></div>
+<div style="position:absolute;left:1260px;top:330px;width:532px;height:330px;display:flex;flex-direction:column;gap:8px;background:#182028;border:2px solid #2a3540;border-radius:16px;padding:28px 32px" data-build-in="rise 3 auto"><h3 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:40px;color:#5ad1b8">Module</h3><p style="font-size:28px;line-height:1.4;color:#e8ebe6">A repo that bundles a plugin with the Claude skills that drive it, discovered when you add it as a project.</p></div>
+<p style="position:absolute;left:128px;top:710px;width:1664px;font-family:'JetBrains Mono', 'Courier New', monospace;font-size:30px;color:#5ad1b8" data-build-in="fade 4 auto">meta plugin install | list | verify | update | remove</p>
+<p style="position:absolute;left:128px;top:780px;width:1500px;font-size:32px;line-height:1.4;color:#9aa7b2" data-build-in="fade 5 auto">Version pinning and optional checksums are built in. The rules and mcp features ship as external plugins in this very workspace.</p>
 <aside>Three plugin kinds exist: built-in (compiled in), protocol (subprocess, JSON over stdio) and manifest (executable plus manifest). Templates exist for Node, Python, Go and shell. A module is the distribution unit that bundles a plugin and skills. Sources: docs/PLUGIN_DEVELOPMENT.md and docs/MODULES.md.</aside>
 </section>

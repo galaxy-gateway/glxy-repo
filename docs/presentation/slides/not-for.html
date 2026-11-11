@@ -1,14 +1,13 @@
-<section id="not-for" data-transition="fade" style="background:#e9ebe4;color:#14191f;font-family:'Inter', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:40px">
+<section id="not-for" data-transition="fade" style="background:#e9ebe4;color:#14191f;font-family:'Inter', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:24px">
 <p style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:28px;color:#8a4a12;letter-spacing:2px;text-transform:uppercase">Honest limits</p>
 <h2 style="font-family:'Space Grotesk', Arial, sans-serif;font-size:72px;font-weight:600;line-height:1.1;color:#14191f">When not to use it</h2>
-<table style="font-size:30px;color:#14191f">
-<tr><th style="width:50%;text-align:left">Situation</th><th style="width:50%;text-align:left">Better fit</th></tr>
-<tr><td>One or two repos</td><td>Plain git</td></tr>
-<tr><td>Atomic cross-repo refactors</td><td>A monorepo</td></tr>
-<tr><td>Build graphs, caching, affected-only tests</td><td>Nx, Turborepo or Bazel</td></tr>
-<tr><td>Coordinated package versioning</td><td>Changesets or release tooling</td></tr>
-<tr><td>Teams that never open a terminal</td><td>A hosted platform UI</td></tr>
+<table style="width:1664px;border-collapse:collapse;color:#14191f"><tr><th style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;letter-spacing:2px;text-transform:uppercase;color:#8a4a12;text-align:left;height:64px;padding:0 24px;border-bottom:3px solid #8a4a12;width:55%">Situation</th><th style="font-family:'JetBrains Mono', 'Courier New', monospace;font-size:24px;letter-spacing:2px;text-transform:uppercase;color:#8a4a12;text-align:left;height:64px;padding:0 24px;border-bottom:3px solid #8a4a12">Better fit</th></tr>
+<tr><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;font-weight:600">One or two repos</td><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;color:#3b4650">Plain git</td></tr>
+<tr><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;font-weight:600">Atomic cross-repo refactors</td><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;color:#3b4650">A monorepo</td></tr>
+<tr><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;font-weight:600">Build graphs, caching, affected-only tests</td><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;color:#3b4650">Nx, Turborepo or Bazel</td></tr>
+<tr><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;font-weight:600">Coordinated package versioning</td><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;color:#3b4650">Changesets or release tooling</td></tr>
+<tr><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;font-weight:600">Teams that never open a terminal</td><td style="font-size:30px;line-height:1.3;height:88px;padding:0 24px;border-bottom:2px solid #c3c8bc;color:#3b4650">A hosted platform UI</td></tr>
 </table>
-<p style="font-size:32px;line-height:1.4;color:#3b4650">meta runs git and your commands across repos. It does not understand your build graph or merge changes atomically.</p>
+<p style="font-size:32px;line-height:1.4;color:#3b4650;padding-top:16px">meta runs git and your commands across repos. It does not understand your build graph or merge changes atomically.</p>
 <aside>Say this plainly; it builds trust. meta is a coordination layer over independent repos, not a build system and not a monorepo substitute.</aside>
 </section>
