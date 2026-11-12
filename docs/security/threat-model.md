@@ -36,11 +36,11 @@ What we trust, and what its compromise would mean:
 |---|---|---|
 | Maintainer GPG key | Signing commits and release tags | Forged "authentic" history and releases |
 | Maintainer GitHub account | Push to main, repo settings, secrets | Full pipeline control: malicious code, workflow edits, secret exfiltration |
-| GitHub Actions runners | Building and publishing releases | Malicious artifacts signed-looking and checksummed by the same compromised run |
+| GitHub Actions runners | Building release binaries and attaching them to GitHub releases | Malicious artifacts signed-looking and checksummed by the same compromised run |
 | crates.io registry + index | Serving the crates Cargo.lock pins | Malicious dependency code at build time (mitigated by lockfile checksums; registry-level compromise of *existing* versions would be caught by checksum mismatch) |
 | RustSec advisory DB | Vulnerability intelligence | Silence: missing advisories, not malicious code |
 | ~29 direct dependencies (211 packages total in Cargo.lock, including the 3 workspace crates) | Correct, non-malicious code | Arbitrary code in every build and in users' binaries |
-| Pinned GitHub Actions (checkout, dtolnay/rust-toolchain, release-plz, cache) | CI steps with checkout and secret access | Build tampering, secret theft — pinning by full SHA means compromise requires a PR changing the pin, not a silent tag move |
+| Pinned GitHub Actions (checkout, dtolnay/rust-toolchain, cache, action-gh-release) | CI steps with checkout and secret access | Build tampering, secret theft — pinning by full SHA means compromise requires a PR changing the pin, not a silent tag move |
 
 ## Attacker capabilities considered
 
@@ -61,17 +61,22 @@ What we trust, and what its compromise would mean:
 4. **Moves a tag on a GitHub Action we use.** All workflow actions are pinned
    to full commit SHAs with a version comment; a moved tag has no effect.
 
-5. **Steals the crates.io publish token.** Today this is the live worst gap:
-   `release-plz.yml` injects a static `CARGO_REGISTRY_TOKEN` from repo
-   secrets. A leak (or any code that can read repo secrets) publishes
-   malicious crate versions under our name. Fix in flight: crates.io trusted
-   publishing via GitHub OIDC (#38, P0) removes the long-lived token.
+5. **Steals the crates.io publish token.** No workflow publishes crates any
+   more: the automated release workflow was removed (#191) and the maintainer
+   runs `cargo publish --workspace` by hand (see
+   [Releasing](../../CONTRIBUTING.md#releasing)), so the token in use lives on
+   the maintainer's machine, not in CI. A leak there still publishes
+   malicious crate versions under our name. The `CARGO_REGISTRY_TOKEN` repo
+   secret the removed workflow used is no longer read by any workflow and
+   should be deleted. crates.io trusted publishing via GitHub OIDC (#38)
+   would remove the long-lived token if publishing moves back into CI.
 
-6. **Steals or abuses the `RELEASE_TOKEN` PAT.** Used by release-plz for
-   checkout and release PRs with `contents: write`. Workflows default to
-   `contents: read` and escalate per job, limiting what other jobs expose,
-   but the PAT itself remains a long-lived credential (accepted for now;
-   revisit when fine-grained tokens fit the release-plz flow).
+6. **Steals or abuses a long-lived GitHub PAT in repo secrets.** Retired. The
+   only such PAT was used by the removed release workflow (#191) and has
+   expired; no workflow references it, and the repo secret should be deleted.
+   The remaining workflows default to `contents: read` and escalate per job
+   using the built-in `GITHUB_TOKEN` (`release-binaries.yml` takes
+   `contents: write` to upload release assets).
 
 7. **Tampers with release artifacts after build.** `release-binaries.yml`
    builds 5 targets with `--locked` and uploads a per-asset `.sha256`.
@@ -118,8 +123,7 @@ What we trust, and what its compromise would mean:
 
 | Risk | Why accepted |
 |---|---|
-| Static `CARGO_REGISTRY_TOKEN` until #38 lands | Fix is queued as P0; one-time config change |
-| `RELEASE_TOKEN` is a long-lived PAT | Needed by release-plz for cross-workflow pushes; scoped permissions limit blast radius |
+| Long-lived crates.io token on the maintainer's machine | Crates are published by hand, so no CI job reads a publish token. #38 (trusted publishing) applies only if publishing moves back into CI |
 | Checksums share a trust channel with binaries until #96 | Provenance attestation epic is P1 |
 | 4 ignored RUSTSEC advisories (paste, lru, bytes, git2) | All transitive, no patched upstream release yet; listed explicitly in audit.toml and deny.toml, revisited on dependency bumps |
 | `unknown-git = "warn"` not `"deny"` in deny.toml | `allow-git = []` and no git dependencies exist today; flip to deny is a known one-liner (noted in #31 closure) |
@@ -161,7 +165,7 @@ What we trust, and what its compromise would mean:
 Re-read and update this document when any of the following changes:
 
 - A new distribution channel is added (homebrew tap, package managers, container images).
-- The release pipeline changes (replacing release-plz, new publish targets).
+- The release pipeline changes (moving publishing back into CI, new publish targets).
 - Plugins or skills gain a new execution or installation path.
 - A new long-lived credential is added to repo secrets.
 - #38 or #96 lands (move the corresponding rows out of residual risks).
