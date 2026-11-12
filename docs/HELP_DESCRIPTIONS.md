@@ -99,6 +99,25 @@ replaces whatever the plugin/module declared for that command:
 - The override wins over the author-declared description.
 - Works at any depth.
 
+## Top-level command groups
+
+`meta --help` (also `meta -h`, `meta help`, and bare `meta`) lists subcommands
+under headed groups instead of one flat `Commands:` list, everyday commands
+first:
+
+| Group | Commands |
+|-------|----------|
+| `Core:` | `init`, `repo`, `git`, `exec`, `run`, `status`, `help` |
+| `Workspace:` | `workspace`, `worktree`, `config` |
+| `Agents and extensions:` | `skill`, `module`, `plugin`, plus every command contributed by an external plugin (alphabetical) |
+
+- Grouping is display-only. No command is renamed, hidden, or nested, and all
+  aliases (`project`, `ws`, `wt`, ...) keep working.
+- The groups are the `HELP_GROUPS` table in `meta/src/cli.rs`. A new built-in
+  command that is not added to the table still shows up, in the last group.
+- Only the top level is grouped; `meta <cmd> --help` keeps its `Commands:`
+  section.
+
 ## Notes
 
 - The `Description:` header is styled to match the other help section headers

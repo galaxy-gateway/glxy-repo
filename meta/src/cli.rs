@@ -54,6 +54,95 @@ fn apply_help_overrides(cmd: Command, prefix: &str, map: &HashMap<String, String
     })
 }
 
+/// Top-level help groups, in display order, everyday commands first. Commands
+/// not listed here (those contributed by external plugins) are appended to the
+/// last group, so nothing is ever dropped from `meta --help`.
+const HELP_GROUPS: [(&str, &[&str]); 3] = [
+    (
+        "Core",
+        &["init", "repo", "git", "exec", "run", "status", "help"],
+    ),
+    ("Workspace", &["workspace", "worktree", "config"]),
+    ("Agents and extensions", &["skill", "module", "plugin"]),
+];
+
+/// Render the top-level subcommands as headed groups (see [`HELP_GROUPS`]),
+/// styled and aligned like clap's own Commands section.
+fn grouped_commands_help(app: &Command) -> String {
+    let mut rows: Vec<(String, String)> = app
+        .get_subcommands()
+        .filter(|c| !c.is_hide_set())
+        .map(|c| {
+            let mut about = c
+                .get_about()
+                .map(|s| s.ansi().to_string())
+                .unwrap_or_default();
+            let aliases: Vec<&str> = c.get_visible_aliases().collect();
+            match aliases.len() {
+                0 => {}
+                1 => about.push_str(&format!(" [alias: {}]", aliases[0])),
+                _ => about.push_str(&format!(" [aliases: {}]", aliases.join(", "))),
+            }
+            (c.get_name().to_string(), about)
+        })
+        .collect();
+    // clap only adds its built-in `help` subcommand when the app is built.
+    rows.push((
+        "help".to_string(),
+        "Print this message or the help of the given subcommand(s)".to_string(),
+    ));
+    rows.sort();
+
+    let indent = rows.iter().map(|(n, _)| n.len()).max().unwrap_or(0) + 4;
+    // Same rule as clap for the Options section: terminal width, or 100 when
+    // the output is not a terminal.
+    let width = if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        crossterm::terminal::size().map_or(100, |(w, _)| w as usize)
+    } else {
+        100
+    }
+    .max(indent + 20);
+    let grouped = |name: &str| HELP_GROUPS.iter().any(|(_, names)| names.contains(&name));
+
+    let mut out = String::new();
+    for (i, (heading, names)) in HELP_GROUPS.iter().enumerate() {
+        let mut members: Vec<&(String, String)> = names
+            .iter()
+            .filter_map(|n| rows.iter().find(|r| r.0 == *n))
+            .collect();
+        if i == HELP_GROUPS.len() - 1 {
+            members.extend(rows.iter().filter(|r| !grouped(&r.0)));
+        }
+        if members.is_empty() {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&format!("\x1b[1;96m{heading}:\x1b[0m\n"));
+        for (name, about) in members {
+            out.push_str(&format!("  \x1b[1m\x1b[97m{name}\x1b[0m"));
+            out.push_str(&" ".repeat(indent - 2 - name.len()));
+            // Word-wrap the description with a hanging indent.
+            let mut col = indent;
+            for (j, word) in about.split_whitespace().enumerate() {
+                if j > 0 && col + 1 + word.len() > width {
+                    out.push('\n');
+                    out.push_str(&" ".repeat(indent));
+                    col = indent;
+                } else if j > 0 {
+                    out.push(' ');
+                    col += 1;
+                }
+                out.push_str(word);
+                col += word.len();
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
 pub struct MetarepoCli {
     registry: RefCell<PluginRegistry>,
 }
@@ -208,7 +297,15 @@ impl MetarepoCli {
 
         // Apply the standard help layout (Options before Commands) to the whole
         // command tree so every subcommand matches the top-level ordering.
-        metarepo_core::with_standard_help(app)
+        let app = metarepo_core::with_standard_help(app);
+
+        // Top level only: replace the flat Commands list with headed groups.
+        // The groups ride in the after-help slot because clap has no
+        // per-subcommand help headings.
+        let groups = grouped_commands_help(&app);
+        app.after_help(groups).help_template(
+            "{about-with-newline}\n{usage-heading} {usage}\n\n\x1b[1;96mOptions:\x1b[0m\n{options}{after-help}",
+        )
     }
 
     pub fn run(&self, args: Vec<String>) -> Result<()> {

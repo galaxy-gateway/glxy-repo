@@ -382,3 +382,28 @@ fn root_flag_targets_outermost_metarepo() {
         "rooted got:\n{rooted}"
     );
 }
+
+// `meta --help` lists subcommands under headed groups, everyday commands first,
+// so agent-oriented commands do not sit beside git and exec.
+#[test]
+fn help_groups_commands_with_core_before_agents() {
+    let tmp = TempDir::new().unwrap();
+    let out = meta_in(tmp.path(), &["--help"]);
+    assert!(out.status.success());
+    let help = stdout(&out);
+    let pos = |needle: &str| {
+        help.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} missing from help:\n{help}"))
+    };
+    let (core, workspace, agents) = (
+        pos("Core:"),
+        pos("Workspace:"),
+        pos("Agents and extensions:"),
+    );
+    assert!(core < workspace && workspace < agents);
+    // Match on the one-line descriptions: bare names also occur in option help.
+    let git = pos("Git operations across multiple repositories");
+    let skill = pos("Manage Claude Code skills");
+    assert!(core < git && git < workspace, "git belongs to Core");
+    assert!(agents < skill, "skill belongs to Agents and extensions");
+}
