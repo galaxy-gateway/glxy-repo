@@ -60,7 +60,8 @@ impl WorktreePlugin {
                                  The command intelligently handles branches:\n\
                                    • If the branch exists locally, it checks it out\n\
                                    • If it exists remotely, it creates a local tracking branch\n\
-                                   • If it doesn't exist, it prompts for a starting point or uses --from\n\n\
+                                   • If it doesn't exist, it prompts for a starting point or uses --from\n\
+                                     (under --non-interactive: HEAD for defaults, an error for fail)\n\n\
                                  Examples:\n\
                                    meta worktree add feature-123                           # Smart detection\n\
                                    meta worktree add feature-123 --from origin/main        # Create from specific branch\n\
@@ -519,6 +520,7 @@ fn handle_add(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
         allow_hooks,
         current_project.as_deref(),
         &config.meta_config,
+        config.non_interactive,
     )?;
     Ok(())
 }
@@ -582,7 +584,14 @@ fn handle_remove(matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
     // If no projects specified, remove_worktrees selects from `scope` (using an
     // interactive multiselect when several in-scope projects have the branch).
 
-    remove_worktrees(&branch, &projects, &base_path, force, &scope)?;
+    remove_worktrees(
+        &branch,
+        &projects,
+        &base_path,
+        force,
+        &scope,
+        config.non_interactive,
+    )?;
     Ok(())
 }
 

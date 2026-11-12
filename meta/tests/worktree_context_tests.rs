@@ -292,6 +292,7 @@ fn create_branch_bases_on_remote_when_it_exists() {
         false,
         Some("app"),
         &config,
+        None,
     )
     .expect("add_worktrees must succeed");
 
