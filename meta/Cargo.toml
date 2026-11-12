@@ -12,6 +12,16 @@ readme = "../README.md"
 keywords = ["meta", "monorepo", "git", "project", "management"]
 categories = ["development-tools", "command-line-utilities"]
 
+# cargo binstall metarepo: fetch the archives built by release-binaries.yml
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/meta-{ version }-{ target }.tar.gz"
+bin-dir = "meta-{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/meta-{ version }-{ target }.zip"
+pkg-fmt = "zip"
+
 [[bin]]
 name = "meta"
 path = "src/main.rs"

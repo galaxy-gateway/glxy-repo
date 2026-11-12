@@ -48,7 +48,15 @@ cargo install metarepo        # the crate is metarepo, the command is meta
 meta --version
 ```
 
-No Rust toolchain? Grab a prebuilt binary for macOS, Linux or Windows from the [releases page](https://github.com/galaxy-gateway/glxy-repo/releases), unpack it, and put `meta` on your `PATH`.
+No Rust toolchain? On macOS or Linux, the install script downloads the prebuilt binary for your machine, verifies its checksum and puts `meta` in `~/.local/bin` (no sudo; set `INSTALL_DIR` or `VERSION` to change where and what):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/galaxy-gateway/glxy-repo/main/install.sh | sh
+```
+
+With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), `cargo binstall metarepo` fetches the same prebuilt binary instead of compiling.
+
+On Windows, or to do it by hand, grab an archive from the [releases page](https://github.com/galaxy-gateway/glxy-repo/releases), unpack it, and put `meta` on your `PATH`.
 
 From a clone of this repo: `cargo install --path meta`.
 
