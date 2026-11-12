@@ -12,6 +12,7 @@ Thank you for your interest in contributing to metarepo! This document provides 
 - [Development Workflow](#development-workflow)
 - [Testing](#testing)
 - [Documentation](#documentation)
+- [Releasing](#releasing)
 - [Security](#security)
 
 ## Code of Conduct
@@ -499,6 +500,43 @@ See [docs/qa/TESTING_GUIDELINES.md](docs/qa/TESTING_GUIDELINES.md) for comprehen
 - Include code examples
 - Use proper markdown formatting
 - Keep documentation up-to-date with code changes
+
+## Releasing
+
+Releases are cut by hand by the maintainer. Nothing opens release PRs or
+publishes crates automatically; the only automated step is the binary build
+that runs when a version tag is pushed.
+
+1. **Bump the version.** `make bump-version V=X.Y.Z` rewrites the version in
+   the `meta-core`, `meta`, `metarepo-plugin-sdk` and
+   `plugins/metarepo-plugin-*` manifests, the `metarepo-*` dependency pins
+   between those crates, and the plugin pins in `.meta`. All crates share one
+   version; `make check-versions` confirms they agree. The target uses BSD
+   `sed -i ''`, so run it on macOS.
+2. **Refresh the lockfile.** Run `cargo build` so `Cargo.lock` picks up the
+   new versions.
+3. **Update the changelog.** Add a `## [X.Y.Z] - YYYY-MM-DD` section to
+   [meta/CHANGELOG.md](meta/CHANGELOG.md).
+4. **Commit.** One signed commit, `chore(release): ...`, containing the
+   manifests, `.meta`, `Cargo.lock` and the changelog, landed on `main`.
+5. **Publish (maintainer only).** Run `cargo publish --workspace` from the
+   workspace root with the maintainer's own crates.io credentials.
+6. **Confirm the version is on crates.io**, for example with
+   `cargo search metarepo --limit 1` or on the
+   [crate page](https://crates.io/crates/metarepo/versions). Do not tag a
+   version that failed to publish.
+7. **Tag.** Create and push an annotated tag on the release commit:
+
+   ```bash
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+
+   Pushing a `v*` tag triggers
+   [.github/workflows/release-binaries.yml](.github/workflows/release-binaries.yml),
+   which builds `meta` for Linux (x86_64, aarch64), macOS (x86_64, aarch64)
+   and Windows (x86_64) and attaches the archives and their `.sha256` files
+   to the GitHub release for that tag.
 
 ## Security
 
