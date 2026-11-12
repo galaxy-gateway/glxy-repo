@@ -61,7 +61,10 @@ fn write_meta(dir: &Path, projects: &[(&str, &str)]) {
 }
 
 fn file_url(path: &Path) -> String {
-    format!("file://{}", path.canonicalize().unwrap().display())
+    // Windows canonical paths look like \\?\C:\dir; git wants file:///C:/dir.
+    let p = path.canonicalize().unwrap().display().to_string();
+    let p = p.trim_start_matches(r"\\?\").replace('\\', "/");
+    format!("file://{}{}", if p.starts_with('/') { "" } else { "/" }, p)
 }
 
 struct Run {
