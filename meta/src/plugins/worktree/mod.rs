@@ -388,6 +388,7 @@ pub fn add_worktrees(
     allow_hooks: bool,
     current_project: Option<&str>,
     config: &MetaConfig,
+    non_interactive: Option<metarepo_core::NonInteractiveMode>,
 ) -> Result<()> {
     // Determine which projects to operate on
     let selected_projects = if projects.is_empty() {
@@ -397,6 +398,10 @@ pub fn add_worktrees(
             vec![current.to_string()]
         } else {
             // Interactive selection
+            no_prompt_under_flag(
+                non_interactive,
+                "No project specified; pass --project, --projects or --all",
+            )?;
             select_projects_interactive(config)?
         }
     } else if projects.len() == 1 && projects[0] == "--all" {
@@ -561,7 +566,17 @@ pub fn add_worktrees(
                     // Branch doesn't exist - need to create it
                     let start_point = if let Some(start) = starting_point {
                         start.to_string()
+                    } else if non_interactive == Some(metarepo_core::NonInteractiveMode::Defaults) {
+                        // The prompt's own default.
+                        "HEAD".to_string()
                     } else {
+                        no_prompt_under_flag(
+                            non_interactive,
+                            &format!(
+                                "Branch '{}' not found in {}; pass --from or -b",
+                                branch, project_name
+                            ),
+                        )?;
                         // Prompt user for starting point
                         println!(
                             "  {} Branch '{}' not found",
@@ -607,7 +622,7 @@ pub fn add_worktrees(
                 if let Some(worktree_init) = config.get_worktree_init(project_name) {
                     let proceed = if allow_hooks {
                         true
-                    } else if metarepo_core::is_interactive() {
+                    } else if non_interactive.is_none() && metarepo_core::is_interactive() {
                         println!(
                             "  {} worktree_init hook for {}:",
                             "🪝".yellow(),
@@ -693,6 +708,7 @@ pub fn remove_worktrees(
     base_path: &Path,
     force: bool,
     scope: &[String],
+    non_interactive: Option<metarepo_core::NonInteractiveMode>,
 ) -> Result<()> {
     let meta_file_path = MetaConfig::locate_in(base_path)?.path;
 
@@ -736,6 +752,14 @@ pub fn remove_worktrees(
             in_scope
         } else {
             // Multiple in-scope projects have it — let the user choose.
+            no_prompt_under_flag(
+                non_interactive,
+                &format!(
+                    "Worktree '{}' exists in several projects ({}); pass --project, --projects or --all",
+                    branch,
+                    in_scope.join(", ")
+                ),
+            )?;
             select_projects_for_removal(&in_scope, branch)?
         }
     } else if projects.len() == 1 && projects[0] == "--all" {
@@ -1412,6 +1436,19 @@ pub fn repair_worktrees(base_path: &Path, scope_projects: &[String], dry_run: bo
         }
     );
 
+    Ok(())
+}
+
+/// The prompts below read stdin directly, so they would block on an open pipe.
+/// An explicit --non-interactive must never reach them: fail with `message`,
+/// which names the flag that supplies the answer.
+fn no_prompt_under_flag(
+    non_interactive: Option<metarepo_core::NonInteractiveMode>,
+    message: &str,
+) -> Result<()> {
+    if non_interactive.is_some() {
+        anyhow::bail!("{} (--non-interactive is set, not prompting)", message);
+    }
     Ok(())
 }
 
