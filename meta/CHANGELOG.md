@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.85.0] - 2026-11-12
+
+### Added
+
+- *(install)* `install.sh` downloads the prebuilt binary for macOS or Linux, verifies its checksum and installs `meta` into `~/.local/bin` without sudo; `cargo binstall metarepo` metadata points at the same release archives (#185)
+- *(tests)* end-to-end smoke tests drive the real binary through one happy path per core command, with stdin closed and a timeout so a stray prompt fails instead of hanging (#195)
+
+### Fixed
+
+- *(worktree)* `meta --non-interactive ... worktree add` for a new branch no longer waits on a starting-point prompt when stdin is an open pipe: `defaults` creates the branch from HEAD and `fail` errors naming `--from` / `-b`. The project-selection prompts in `worktree add` and `worktree remove` are also never reached under `--non-interactive` (#195)
+- *(deps)* update libz-sys and tokio to clear RUSTSEC-2026-0418 and RUSTSEC-2026-0386 (#178)
+
+### Changed
+
+- *(cli)* `meta --help` lists commands under three headings (Core, Workspace, Agents and extensions) with the everyday commands first; no command was renamed or removed (#192)
+- *(worktree)* under `--non-interactive`, `worktree remove` for a worktree that exists in several repos now errors unless `--project`, `--projects` or `--all` is given, instead of prompting
+- *(release)* the release-plz workflow is removed; releases are cut by hand as described in CONTRIBUTING.md (#191)
+- *(repo)* the repository moved to github.com/galaxy-gateway/glxy-repo; old links redirect
+
 ## [0.84.0] - 2026-11-10
 
 ### Added
