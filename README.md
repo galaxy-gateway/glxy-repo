@@ -297,6 +297,7 @@ Start with [docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md) and the temp
 - [Plugin development](docs/PLUGIN_DEVELOPMENT.md) · [Plugin protocol](docs/PLUGIN_PROTOCOL_V1.md) · [Modules](docs/MODULES.md) · [Rules](docs/RULES.md)
 - [Harness integration](docs/HARNESS_INTEGRATION.md) · [MCP gateway](docs/MCP_GATEWAY.md)
 - [Architecture](docs/ARCHITECTURE.md) · [Product boundaries](docs/PRODUCT.md) · [Roadmap ideas](docs/TODO.md)
+- [Stability and versioning](docs/STABILITY.md): what may change between releases (draft)
 
 ## Contributing
 
