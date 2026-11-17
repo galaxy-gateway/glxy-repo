@@ -3,6 +3,7 @@
 use anyhow::Result;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use metarepo_core::{BasePlugin, MetaPlugin, RuntimeConfig};
+use std::io::IsTerminal;
 
 use super::{gather, Options, ProjectState, Section, Snapshot, Tier};
 
@@ -36,6 +37,12 @@ impl MetaPlugin for DashPlugin {
                         .long("json")
                         .action(ArgAction::SetTrue)
                         .help("Print everything that was read as JSON"),
+                )
+                .arg(
+                    Arg::new("summary")
+                        .long("summary")
+                        .action(ArgAction::SetTrue)
+                        .help("Print the plain summary even in a terminal"),
                 )
                 .arg(
                     Arg::new("no-github")
@@ -80,7 +87,8 @@ impl MetaPlugin for DashPlugin {
                      project, day and model, at the prices listed in this version of meta.\n\
                      \n\
                      Examples:\n  \
-                       meta dash                         Summary by tier\n  \
+                       meta dash                         Interactive dashboard (summary when piped)\n  \
+                       meta dash --summary               Summary by tier\n  \
                        meta dash --json                  Everything, as JSON\n  \
                        meta dash --json --no-github      Local state only, no network\n  \
                        meta dash --retier                Apply the tier moves that are due\n",
@@ -89,6 +97,12 @@ impl MetaPlugin for DashPlugin {
     }
 
     fn handle_command(&self, matches: &ArgMatches, config: &RuntimeConfig) -> Result<()> {
+        // In a terminal, with nothing asking for text or a write: the interface.
+        let wants_text =
+            matches.get_flag("json") || matches.get_flag("summary") || matches.get_flag("retier");
+        if !wants_text && std::io::stdout().is_terminal() && std::io::stdin().is_terminal() {
+            return super::tui::run(config);
+        }
         let snapshot = gather(
             config,
             Options {

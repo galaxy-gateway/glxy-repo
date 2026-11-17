@@ -20,6 +20,9 @@ mod plugin;
 mod scan;
 mod sessions;
 mod tiers;
+mod tui;
+mod view;
+mod workspaces;
 
 pub use cost::{Cost, CostRow, SessionCost};
 pub use github::Issue;

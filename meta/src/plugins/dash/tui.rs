@@ -1,0 +1,953 @@
+//! The interactive `meta dash`: seven views over one snapshot, read again in
+//! the background so the keys never wait on git or GitHub. Read-only.
+
+use anyhow::{anyhow, Result};
+use crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEvent, MouseEventKind,
+};
+use metarepo_core::tui::{init_terminal, poll_event, restore_terminal};
+use metarepo_core::RuntimeConfig;
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span as Text};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::Frame;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+use super::view::{self, Act, Kind, Row, Span, Tone, Ui, View};
+use super::workspaces::{self, Workspace};
+use super::{gather, Options, Snapshot};
+
+/// How long a snapshot is shown before it is read again unasked.
+const STALE: Duration = Duration::from_secs(120);
+const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const KEYS: &str =
+    "1-7 view · j/k move · enter open · / filter · [ ] period · r read again · ? help · q quit";
+
+/// What the interface asks of the reader thread.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ask {
+    /// Read the workspace with this config file. A quick read is git and
+    /// sessions alone, to have something to show while GitHub is asked.
+    Read { config: PathBuf, quick: bool },
+}
+
+/// What comes back.
+#[derive(Debug)]
+pub enum Tell {
+    Read {
+        config: PathBuf,
+        quick: bool,
+        result: Result<Box<Snapshot>, String>,
+    },
+    /// A workspace found on this machine.
+    Found(Workspace),
+    /// The whole home folder has been looked through.
+    FoundAll,
+}
+
+pub struct App {
+    /// The config file of the workspace shown.
+    config: PathBuf,
+    snapshot: Option<Snapshot>,
+    found: Option<Vec<Workspace>>,
+    view: View,
+    ui: Ui,
+    /// Each view's selected row and first row drawn.
+    places: HashMap<View, (usize, usize)>,
+    rows: Vec<Row>,
+    reading: bool,
+    read_at: Option<Instant>,
+    status: String,
+    typing: bool,
+    help: bool,
+    pub quit: bool,
+    frame: usize,
+    /// Where the last draw put each tab and the list, for the mouse.
+    tabs: Vec<(u16, u16, View)>,
+    list: Rect,
+}
+
+impl App {
+    /// The interface for a workspace, and the first read to ask for.
+    pub fn new(config: PathBuf) -> (App, Vec<Ask>) {
+        let ask = Ask::Read {
+            config: config.clone(),
+            quick: true,
+        };
+        // The workspace shown is listed at once, wherever it lives.
+        let found = config
+            .parent()
+            .and_then(workspaces::describe)
+            .map(|one| vec![one]);
+        let app = App {
+            config,
+            snapshot: None,
+            found,
+            view: View::Now,
+            ui: Ui {
+                looking: true,
+                ..Ui::default()
+            },
+            places: HashMap::new(),
+            rows: Vec::new(),
+            reading: true,
+            read_at: None,
+            status: String::new(),
+            typing: false,
+            help: false,
+            quit: false,
+            frame: 0,
+            tabs: Vec::new(),
+            list: Rect::default(),
+        };
+        (app, vec![ask])
+    }
+
+    fn name(&self) -> String {
+        self.config
+            .parent()
+            .and_then(Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    fn cursor(&self) -> usize {
+        self.places.get(&self.view).map_or(0, |place| place.0)
+    }
+
+    fn selected(&self) -> Option<&Row> {
+        self.rows
+            .get(self.cursor())
+            .filter(|row| row.is_selectable())
+    }
+
+    /// Work the rows out again and keep the selection on something selectable.
+    fn refresh(&mut self) {
+        self.rows = match &self.snapshot {
+            Some(snapshot) => view::rows(self.view, snapshot, &self.ui, self.found.as_deref()),
+            None => Vec::new(),
+        };
+        let cursor = self.cursor().min(self.rows.len().saturating_sub(1));
+        let nearest = (cursor..self.rows.len())
+            .chain((0..cursor).rev())
+            .find(|at| self.rows[*at].is_selectable())
+            .unwrap_or(0);
+        self.places.entry(self.view).or_default().0 = nearest;
+    }
+
+    fn step(&mut self, by: isize) {
+        let mut at = self.cursor();
+        let mut left = by.unsigned_abs();
+        let mut next = at as isize;
+        while left > 0 {
+            next += by.signum();
+            if next < 0 || next as usize >= self.rows.len() {
+                break;
+            }
+            if self.rows[next as usize].is_selectable() {
+                at = next as usize;
+                left -= 1;
+            }
+        }
+        let place = self.places.entry(self.view).or_default();
+        place.0 = at;
+        // At the first thing selectable, show the labels above it too.
+        if !self.rows[..at.min(self.rows.len())]
+            .iter()
+            .any(Row::is_selectable)
+        {
+            place.1 = 0;
+        }
+    }
+
+    fn show(&mut self, view: View) {
+        self.view = view;
+        self.refresh();
+    }
+
+    fn turn(&mut self, by: isize) {
+        let at = View::ALL
+            .iter()
+            .position(|one| *one == self.view)
+            .unwrap_or(0) as isize;
+        let count = View::ALL.len() as isize;
+        self.show(View::ALL[((at + by + count) % count) as usize]);
+    }
+
+    fn read_again(&mut self) -> Vec<Ask> {
+        if self.reading {
+            return Vec::new();
+        }
+        self.reading = true;
+        vec![Ask::Read {
+            config: self.config.clone(),
+            quick: false,
+        }]
+    }
+
+    fn activate(&mut self) -> Vec<Ask> {
+        match self.selected().and_then(|row| row.act.clone()) {
+            Some(Act::Fold(key)) => {
+                if !self.ui.toggled.remove(&key) {
+                    self.ui.toggled.insert(key);
+                }
+                self.refresh();
+                Vec::new()
+            }
+            Some(Act::Switch(config)) => {
+                self.config = config.clone();
+                self.snapshot = None;
+                self.places.clear();
+                self.ui = Ui {
+                    looking: self.ui.looking,
+                    ..Ui::default()
+                };
+                self.reading = true;
+                self.read_at = None;
+                self.status = String::new();
+                self.show(View::Now);
+                vec![Ask::Read {
+                    config,
+                    quick: true,
+                }]
+            }
+            None => Vec::new(),
+        }
+    }
+
+    pub fn on_key(&mut self, key: KeyEvent) -> Vec<Ask> {
+        if key.kind == KeyEventKind::Release {
+            return Vec::new();
+        }
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.quit = true;
+            return Vec::new();
+        }
+        if self.help {
+            self.help = false;
+            return Vec::new();
+        }
+        if self.typing {
+            match key.code {
+                KeyCode::Enter => self.typing = false,
+                KeyCode::Esc => {
+                    self.typing = false;
+                    self.ui.filter.clear();
+                }
+                KeyCode::Backspace => {
+                    self.ui.filter.pop();
+                }
+                KeyCode::Char(letter) => self.ui.filter.push(letter),
+                _ => {}
+            }
+            self.refresh();
+            return Vec::new();
+        }
+        match key.code {
+            KeyCode::Char('q') => self.quit = true,
+            KeyCode::Char('?') => self.help = true,
+            KeyCode::Char(digit @ '1'..='7') => self.show(View::ALL[digit as usize - '1' as usize]),
+            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.turn(1),
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.turn(-1),
+            KeyCode::Down | KeyCode::Char('j') => self.step(1),
+            KeyCode::Up | KeyCode::Char('k') => self.step(-1),
+            KeyCode::PageDown => self.step(10),
+            KeyCode::PageUp => self.step(-10),
+            KeyCode::Home | KeyCode::Char('g') => self.step(-(self.rows.len() as isize)),
+            KeyCode::End | KeyCode::Char('G') => self.step(self.rows.len() as isize),
+            KeyCode::Enter | KeyCode::Char(' ') => return self.activate(),
+            KeyCode::Char('/') => self.typing = true,
+            KeyCode::Esc => {
+                self.ui.filter.clear();
+                self.refresh();
+            }
+            KeyCode::Char('r') => return self.read_again(),
+            KeyCode::Char(way @ ('[' | ']')) => {
+                let at = Span::ALL
+                    .iter()
+                    .position(|one| *one == self.ui.span)
+                    .unwrap_or(0);
+                let next = if way == ']' {
+                    (at + 1).min(Span::ALL.len() - 1)
+                } else {
+                    at.saturating_sub(1)
+                };
+                self.ui.span = Span::ALL[next];
+                self.refresh();
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    pub fn on_mouse(&mut self, mouse: MouseEvent) -> Vec<Ask> {
+        match mouse.kind {
+            MouseEventKind::ScrollDown => self.step(3),
+            MouseEventKind::ScrollUp => self.step(-3),
+            MouseEventKind::Down(MouseButton::Left) => {
+                self.help = false;
+                if mouse.row == 0 {
+                    let hit = self
+                        .tabs
+                        .iter()
+                        .find(|(from, to, _)| (*from..*to).contains(&mouse.column));
+                    if let Some((_, _, view)) = hit.copied() {
+                        self.show(view);
+                    }
+                    return Vec::new();
+                }
+                let within = mouse.row >= self.list.y && mouse.row < self.list.y + self.list.height;
+                let offset = self.places.get(&self.view).map_or(0, |place| place.1);
+                let at = offset + (mouse.row.saturating_sub(self.list.y)) as usize;
+                if !within || !self.rows.get(at).is_some_and(Row::is_selectable) {
+                    return Vec::new();
+                }
+                // A click selects; a click on a heading, or on what is selected, opens.
+                let again = at == self.cursor();
+                self.places.entry(self.view).or_default().0 = at;
+                if again || self.rows[at].kind == Kind::Heading {
+                    return self.activate();
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    pub fn on_tell(&mut self, tell: Tell) -> Vec<Ask> {
+        match tell {
+            Tell::Found(one) => {
+                let found = self.found.get_or_insert_with(Vec::new);
+                if !found.iter().any(|known| known.config == one.config) {
+                    found.push(one);
+                }
+                self.refresh();
+                Vec::new()
+            }
+            Tell::FoundAll => {
+                self.found.get_or_insert_with(Vec::new);
+                self.ui.looking = false;
+                self.refresh();
+                Vec::new()
+            }
+            // An answer for a workspace no longer shown.
+            Tell::Read { config, .. } if config != self.config => Vec::new(),
+            Tell::Read {
+                quick,
+                result: Ok(snapshot),
+                ..
+            } => {
+                let mut said: Vec<String> = snapshot.notes.clone();
+                if !snapshot.github.failed.is_empty() {
+                    said.push(format!(
+                        "no GitHub data for {}",
+                        snapshot.github.failed.join(", ")
+                    ));
+                }
+                self.status = said.join(" · ");
+                self.snapshot = Some(*snapshot);
+                self.refresh();
+                if quick {
+                    // Git and sessions are in: now the slow half.
+                    return vec![Ask::Read {
+                        config: self.config.clone(),
+                        quick: false,
+                    }];
+                }
+                self.reading = false;
+                self.read_at = Some(Instant::now());
+                Vec::new()
+            }
+            Tell::Read {
+                result: Err(error), ..
+            } => {
+                self.status = format!("could not read the workspace: {error}");
+                self.reading = false;
+                self.read_at = Some(Instant::now());
+                Vec::new()
+            }
+        }
+    }
+
+    /// Called between events: reads again once what is shown has gone stale.
+    pub fn tick(&mut self) -> Vec<Ask> {
+        self.frame = self.frame.wrapping_add(1);
+        if self.read_at.is_some_and(|at| at.elapsed() >= STALE) {
+            return self.read_again();
+        }
+        Vec::new()
+    }
+
+    pub fn draw(&mut self, frame: &mut Frame) {
+        let detail: Vec<String> = self
+            .selected()
+            .map(|row| row.detail.clone())
+            .unwrap_or_default();
+        let detail_height = if detail.is_empty() {
+            0
+        } else {
+            detail.len().min(6) as u16 + 1
+        };
+        let [tabs, body, under, footer] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(detail_height),
+            Constraint::Length(1),
+        ])
+        .areas(frame.area());
+
+        // Tabs, each with how much it holds, and where each one is for the mouse.
+        self.tabs.clear();
+        let mut spans = Vec::new();
+        let mut at = tabs.x;
+        for (n, one) in View::ALL.into_iter().enumerate() {
+            let count = self
+                .snapshot
+                .as_ref()
+                .and_then(|snapshot| view::count(one, snapshot));
+            let label = match count {
+                Some(count) if count > 0 => format!(" {} {} {count} ", n + 1, one.title()),
+                _ => format!(" {} {} ", n + 1, one.title()),
+            };
+            let width = Line::from(label.as_str()).width() as u16;
+            self.tabs.push((at, at + width, one));
+            at += width;
+            let style = if one == self.view {
+                Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            spans.push(Text::styled(label, style));
+        }
+        frame.render_widget(Paragraph::new(Line::from(spans)), tabs);
+        let state = if self.reading {
+            format!("{} reading", SPIN[self.frame % SPIN.len()])
+        } else {
+            match self.read_at.map(|at| at.elapsed().as_secs()) {
+                Some(secs) if secs >= 60 => format!("read {}m ago", secs / 60),
+                Some(_) => "read just now".to_string(),
+                None => String::new(),
+            }
+        };
+        let right = format!("{} · {state} ", self.name());
+        if (at as usize) + right.chars().count() < tabs.width as usize {
+            frame.render_widget(
+                Paragraph::new(right)
+                    .alignment(Alignment::Right)
+                    .style(Style::default().fg(Color::DarkGray)),
+                tabs,
+            );
+        }
+
+        // The list, scrolled to keep the selection in sight.
+        self.list = body;
+        let height = body.height as usize;
+        let cursor = self.cursor();
+        let place = self.places.entry(self.view).or_default();
+        if self.rows.len() <= height {
+            place.1 = 0;
+        } else {
+            place.1 = place.1.min(cursor).min(self.rows.len() - height);
+            if cursor >= place.1 + height {
+                place.1 = cursor + 1 - height;
+            }
+        }
+        let offset = place.1;
+        let lines: Vec<Line> = if self.snapshot.is_none() {
+            let said = if self.status.is_empty() {
+                "Reading the workspace…"
+            } else {
+                self.status.as_str()
+            };
+            vec![Line::styled(
+                format!("  {said}"),
+                Style::default().fg(Color::DarkGray),
+            )]
+        } else {
+            self.rows
+                .iter()
+                .enumerate()
+                .skip(offset)
+                .take(height)
+                .map(|(at, row)| line_of(row, at == cursor && row.is_selectable()))
+                .collect()
+        };
+        frame.render_widget(Paragraph::new(lines), body);
+
+        if detail_height > 0 {
+            let lines: Vec<Line> = detail
+                .iter()
+                .take(6)
+                .map(|line| Line::from(format!("  {line}")))
+                .collect();
+            let block = Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(Color::DarkGray));
+            frame.render_widget(Paragraph::new(lines).block(block), under);
+        }
+
+        let foot = if self.typing {
+            Line::from(vec![
+                Text::styled(
+                    format!(" /{}", self.ui.filter),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Text::styled("█", Style::default().fg(Color::Cyan)),
+                Text::styled(
+                    "  enter keeps it · esc clears it",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])
+        } else if !self.ui.filter.trim().is_empty() {
+            Line::from(vec![
+                Text::styled(
+                    format!(" filter: {}", self.ui.filter),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Text::styled(
+                    "  esc clears it · / changes it",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])
+        } else if !self.status.is_empty() && self.snapshot.is_some() {
+            Line::styled(
+                format!(" {}", self.status),
+                Style::default().fg(Color::Yellow),
+            )
+        } else {
+            Line::styled(format!(" {KEYS}"), Style::default().fg(Color::DarkGray))
+        };
+        frame.render_widget(Paragraph::new(foot), footer);
+
+        if self.help {
+            draw_help(frame);
+        }
+    }
+}
+
+fn style_of(tone: Tone) -> Style {
+    match tone {
+        Tone::Plain => Style::default(),
+        Tone::Dim => Style::default().fg(Color::DarkGray),
+        Tone::Good => Style::default().fg(Color::Green),
+        Tone::Warn => Style::default().fg(Color::Yellow),
+        Tone::Bad => Style::default().fg(Color::Red),
+        Tone::Accent => Style::default().fg(Color::Cyan),
+        Tone::Title => Style::default().add_modifier(Modifier::BOLD),
+    }
+}
+
+fn line_of(row: &Row, is_selected: bool) -> Line<'static> {
+    let mut spans = vec![if is_selected {
+        Text::styled(
+            "› ",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Text::raw("  ")
+    }];
+    spans.push(Text::raw("  ".repeat(row.indent as usize)));
+    for (text, tone) in &row.cells {
+        let style = style_of(*tone);
+        spans.push(Text::styled(
+            text.clone(),
+            if is_selected {
+                style.add_modifier(Modifier::BOLD)
+            } else {
+                style
+            },
+        ));
+    }
+    Line::from(spans)
+}
+
+fn draw_help(frame: &mut Frame) {
+    let lines = [
+        "1-7, tab, h/l    change view",
+        "j/k, arrows      move",
+        "g/G, page keys   jump",
+        "enter, space     open or close a group; switch workspace",
+        "/                filter the view (esc clears)",
+        "[ ]              the period Cost adds up",
+        "r                read the workspace again",
+        "q                quit",
+        "",
+        "Click a tab or a row; click a heading to open it; the wheel scrolls.",
+        "Read-only: nothing here changes a repository.",
+    ];
+    let area = frame.area();
+    let width = 72.min(area.width.saturating_sub(2));
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let spot = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, spot);
+    let block = Block::default().borders(Borders::ALL).title(" meta dash ");
+    frame.render_widget(
+        Paragraph::new(lines.map(Line::from).to_vec()).block(block),
+        spot,
+    );
+}
+
+/// Reads workspaces as asked, one at a time, for as long as someone listens.
+fn reader(asks: mpsc::Receiver<Ask>, tells: mpsc::Sender<Tell>) {
+    for ask in asks {
+        let Ask::Read { config, quick } = ask;
+        let options = Options {
+            github: !quick,
+            sessions: true,
+            retier: false,
+            cost: !quick,
+        };
+        let result = workspaces::config_at(&config)
+            .and_then(|runtime| gather(&runtime, options))
+            .map(Box::new)
+            .map_err(|error| error.to_string());
+        if tells
+            .send(Tell::Read {
+                config,
+                quick,
+                result,
+            })
+            .is_err()
+        {
+            break;
+        }
+    }
+}
+
+/// Run the dashboard for the workspace `config` belongs to, until quit.
+pub fn run(config: &RuntimeConfig) -> Result<()> {
+    let path = config
+        .meta_file_path
+        .as_ref()
+        .ok_or_else(|| anyhow!("No workspace config found. Run 'meta init' first."))?;
+    let path = path.canonicalize().unwrap_or_else(|_| path.clone());
+    let (ask, asks) = mpsc::channel();
+    let (tell, tells) = mpsc::channel();
+    // Detached, not joined: quitting must not wait for a read under way.
+    let found = tell.clone();
+    std::thread::spawn(move || reader(asks, tell));
+    std::thread::spawn(move || {
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+        if let Some(home) = home {
+            workspaces::find(Path::new(&home), |one| {
+                let _ = found.send(Tell::Found(one));
+            });
+        }
+        let _ = found.send(Tell::FoundAll);
+    });
+
+    let (mut app, first) = App::new(path);
+    let send = |list: Vec<Ask>| {
+        for one in list {
+            let _ = ask.send(one);
+        }
+    };
+    send(first);
+    let mut terminal = init_terminal()?;
+    let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
+    let result = (|| -> Result<()> {
+        while !app.quit {
+            while let Ok(told) = tells.try_recv() {
+                send(app.on_tell(told));
+            }
+            send(app.tick());
+            terminal.draw(|frame| app.draw(frame))?;
+            match poll_event()? {
+                Some(Event::Key(key)) => send(app.on_key(key)),
+                Some(Event::Mouse(mouse)) => send(app.on_mouse(mouse)),
+                _ => {}
+            }
+        }
+        Ok(())
+    })();
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
+    restore_terminal(terminal)?;
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugins::dash::view::tests::snapshot;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// An app that has had its quick and full reads answered.
+    fn app() -> App {
+        let (mut app, first) = App::new("/ws/.metarepo".into());
+        assert_eq!(
+            first,
+            vec![Ask::Read {
+                config: "/ws/.metarepo".into(),
+                quick: true
+            }]
+        );
+        let more = app.on_tell(Tell::Read {
+            config: "/ws/.metarepo".into(),
+            quick: true,
+            result: Ok(Box::new(snapshot())),
+        });
+        assert_eq!(
+            more,
+            vec![Ask::Read {
+                config: "/ws/.metarepo".into(),
+                quick: false
+            }]
+        );
+        assert!(app.reading);
+        assert!(app
+            .on_tell(Tell::Read {
+                config: "/ws/.metarepo".into(),
+                quick: false,
+                result: Ok(Box::new(snapshot()))
+            })
+            .is_empty());
+        assert!(!app.reading);
+        app
+    }
+
+    fn screen(app: &mut App, width: u16, height: u16) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_view_draws_and_the_tabs_count_what_they_hold() {
+        let mut app = app();
+        let lines = screen(&mut app, 120, 30);
+        assert!(lines[0].starts_with(
+            " 1 Now 4  2 Projects 4  3 Board 3  4 Issues 4  5 Sessions 3  6 Cost  7 Workspaces"
+        ));
+        assert!(lines[0].ends_with("ws · read just now"));
+        assert!(lines.iter().any(|l| l.contains("Waiting on you")));
+        assert!(lines[29].contains("? help"));
+        for (digit, words) in [
+            ('2', "▾ Active  1"),
+            ('3', "▾ Needs fixing  1"),
+            ('4', "▾ Urgent  2"),
+            ('5', "▾ Working  1"),
+            ('6', "By project"),
+            ('7', "Looking for workspaces"),
+        ] {
+            app.on_key(key(KeyCode::Char(digit)));
+            let lines = screen(&mut app, 120, 30);
+            assert!(
+                lines.iter().any(|l| l.contains(words)),
+                "{digit}: {lines:#?}"
+            );
+        }
+        // Narrow and short: still draws, and the selection stays in sight.
+        app.on_key(key(KeyCode::Char('4')));
+        app.on_key(key(KeyCode::Char('G')));
+        let small = screen(&mut app, 40, 8);
+        assert!(small.iter().any(|l| l.starts_with("› ")), "{small:#?}");
+    }
+
+    #[test]
+    fn before_the_first_read_it_says_it_is_reading() {
+        let (mut app, _) = App::new("/ws/.metarepo".into());
+        let lines = screen(&mut app, 120, 10);
+        assert!(lines[1].contains("Reading the workspace…"));
+        assert!(lines[0].contains("reading"));
+        app.on_tell(Tell::Read {
+            config: "/ws/.metarepo".into(),
+            quick: true,
+            result: Err("no such file".into()),
+        });
+        assert!(screen(&mut app, 120, 10)[1].contains("could not read the workspace: no such file"));
+    }
+
+    #[test]
+    fn keys_move_fold_and_show_detail() {
+        let mut app = app();
+        app.on_key(key(KeyCode::Char('2')));
+        // The selection starts on the first heading and skips the gaps between groups.
+        assert_eq!(app.selected().unwrap().text(), "▾ Active  1");
+        app.on_key(key(KeyCode::Char('j')));
+        assert!(app.selected().unwrap().text().starts_with("claw"));
+        assert!(screen(&mut app, 100, 30)
+            .iter()
+            .any(|l| l.contains("github.com/org/claw")));
+        app.on_key(key(KeyCode::Char('j')));
+        assert_eq!(app.selected().unwrap().text(), "▾ Maintained  1");
+        // Enter closes the group, and opens it again.
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.selected().unwrap().text(), "▸ Maintained  1");
+        assert!(!app.rows.iter().any(|row| row.text().starts_with("earth")));
+        app.on_key(key(KeyCode::Char(' ')));
+        assert!(app.rows.iter().any(|row| row.text().starts_with("earth")));
+        app.on_key(key(KeyCode::Char('G')));
+        assert!(app.selected().unwrap().text().starts_with("loose"));
+        app.on_key(key(KeyCode::Char('g')));
+        assert_eq!(app.selected().unwrap().text(), "▾ Active  1");
+        // Each view keeps its own place.
+        app.on_key(key(KeyCode::Char('j')));
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.view, View::Board);
+        app.on_key(key(KeyCode::BackTab));
+        assert!(app.selected().unwrap().text().starts_with("claw"));
+    }
+
+    #[test]
+    fn typing_filters_and_escape_clears() {
+        let mut app = app();
+        app.on_key(key(KeyCode::Char('4')));
+        app.on_key(key(KeyCode::Char('/')));
+        for letter in "globe".chars() {
+            app.on_key(key(KeyCode::Char(letter)));
+        }
+        // While typing, q is a letter, not quit.
+        app.on_key(key(KeyCode::Char('q')));
+        assert!(!app.quit);
+        app.on_key(key(KeyCode::Backspace));
+        assert!(screen(&mut app, 80, 12)[11].starts_with(" /globe█"));
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.rows.len(), 2);
+        assert!(screen(&mut app, 80, 12)[11].starts_with(" filter: globe"));
+        app.on_key(key(KeyCode::Esc));
+        assert!(app.rows.len() > 2);
+        app.on_key(key(KeyCode::Char('q')));
+        assert!(app.quit);
+    }
+
+    #[test]
+    fn the_cost_period_moves_with_the_brackets() {
+        let mut app = app();
+        app.on_key(key(KeyCode::Char('6')));
+        assert!(app.rows[0].text().contains("● 7 days"));
+        app.on_key(key(KeyCode::Char(']')));
+        app.on_key(key(KeyCode::Char(']')));
+        app.on_key(key(KeyCode::Char(']')));
+        assert!(app.rows[0].text().contains("● All"));
+        app.on_key(key(KeyCode::Char('[')));
+        assert!(app.rows[0].text().contains("● 30 days"));
+    }
+
+    #[test]
+    fn the_mouse_picks_tabs_and_rows() {
+        let mut app = app();
+        screen(&mut app, 120, 30);
+        let click = |column, row| MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        // "2 Projects" starts after " 1 Now 4 ".
+        app.on_mouse(click(12, 0));
+        assert_eq!(app.view, View::Projects);
+        screen(&mut app, 120, 30);
+        // Row 2 of the screen is the first project; a click selects it.
+        app.on_mouse(click(5, 2));
+        assert!(app.selected().unwrap().text().starts_with("claw"));
+        // A click on a heading closes it at once.
+        app.on_mouse(click(5, 1));
+        assert_eq!(app.selected().unwrap().text(), "▸ Active  1");
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 5,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_ne!(app.selected().unwrap().text(), "▸ Active  1");
+    }
+
+    #[test]
+    fn switching_workspace_reads_the_other_and_drops_late_answers() {
+        let mut app = app();
+        for (root, config, name, projects, tiers) in [
+            ("/other", "/other/.meta", "other", 2, [2, 0, 0]),
+            ("/ws", "/ws/.metarepo", "ws", 4, [1, 1, 1]),
+            // Found twice, listed once.
+            ("/ws", "/ws/.metarepo", "ws", 4, [1, 1, 1]),
+        ] {
+            app.on_tell(Tell::Found(Workspace {
+                root: root.into(),
+                config: config.into(),
+                name: name.into(),
+                projects,
+                tiers,
+            }));
+        }
+        app.on_key(key(KeyCode::Char('7')));
+        assert_eq!(
+            app.rows.iter().filter(|row| row.kind == Kind::Item).count(),
+            2
+        );
+        assert!(app
+            .rows
+            .iter()
+            .any(|row| row.text() == "Still looking for more…"));
+        app.on_tell(Tell::FoundAll);
+        assert!(!app
+            .rows
+            .iter()
+            .any(|row| row.text() == "Still looking for more…"));
+        assert!(app.selected().unwrap().text().starts_with("● ws"));
+        // Enter on the workspace shown does nothing.
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        app.on_key(key(KeyCode::Char('j')));
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert_eq!(
+            asked,
+            vec![Ask::Read {
+                config: "/other/.meta".into(),
+                quick: true
+            }]
+        );
+        assert!(app.snapshot.is_none() && app.reading);
+        assert_eq!(app.view, View::Now);
+        // The old workspace's answer arrives late and is dropped.
+        assert!(app
+            .on_tell(Tell::Read {
+                config: "/ws/.metarepo".into(),
+                quick: false,
+                result: Ok(Box::new(snapshot()))
+            })
+            .is_empty());
+        assert!(app.snapshot.is_none());
+    }
+
+    #[test]
+    fn a_stale_snapshot_is_read_again_once() {
+        let mut app = app();
+        assert!(app.tick().is_empty());
+        app.read_at = Some(Instant::now() - STALE);
+        assert_eq!(
+            app.tick(),
+            vec![Ask::Read {
+                config: "/ws/.metarepo".into(),
+                quick: false
+            }]
+        );
+        // While that read is under way neither the clock nor r asks again.
+        assert!(app.tick().is_empty());
+        assert!(app.on_key(key(KeyCode::Char('r'))).is_empty());
+    }
+}
