@@ -50,6 +50,12 @@ impl MetaPlugin for DashPlugin {
                         .help("Do not list Claude Code sessions"),
                 )
                 .arg(
+                    Arg::new("no-cost")
+                        .long("no-cost")
+                        .action(ArgAction::SetTrue)
+                        .help("Do not add up cost from Claude Code transcripts"),
+                )
+                .arg(
                     Arg::new("retier")
                         .long("retier")
                         .action(ArgAction::SetTrue)
@@ -69,7 +75,9 @@ impl MetaPlugin for DashPlugin {
                      --retier is given.\n\
                      \n\
                      Pull requests and issues are asked through the gh CLI, and sessions through\n\
-                     the claude CLI; each is skipped with a note when its CLI is missing.\n\
+                     the claude CLI; each is skipped with a note when its CLI is missing. Cost is\n\
+                     summed from the session transcripts Claude Code keeps on this machine, by\n\
+                     project, day and model, at the prices listed in this version of meta.\n\
                      \n\
                      Examples:\n  \
                        meta dash                         Summary by tier\n  \
@@ -87,6 +95,7 @@ impl MetaPlugin for DashPlugin {
                 github: !matches.get_flag("no-github"),
                 sessions: !matches.get_flag("no-sessions"),
                 retier: matches.get_flag("retier"),
+                cost: !matches.get_flag("no-cost"),
             },
         )?;
         if matches.get_flag("json") {
@@ -230,6 +239,21 @@ pub fn summary(snapshot: &Snapshot) -> String {
         "Sessions  {} · {busy} busy · {asking} waiting on you\n",
         snapshot.sessions.len()
     ));
+    if let Some(cost) = &snapshot.cost {
+        out.push_str(&format!(
+            "Cost      today ${:.2} · 7 days ${:.2} · 30 days ${:.2} · all ${:.2}\n",
+            cost.usd_over(Some(1)),
+            cost.usd_over(Some(7)),
+            cost.usd_over(Some(30)),
+            cost.usd_over(None)
+        ));
+        if !cost.unpriced.is_empty() {
+            out.push_str(&format!(
+                "No price listed for: {}\n",
+                cost.unpriced.join(", ")
+            ));
+        }
+    }
     for one in &snapshot.retier {
         let (from, to) = (one.from.as_str(), one.to.as_str());
         out.push_str(&if one.applied {

@@ -14,12 +14,14 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod cost;
 mod github;
 mod plugin;
 mod scan;
 mod sessions;
 mod tiers;
 
+pub use cost::{Cost, CostRow, SessionCost};
 pub use github::Issue;
 pub use plugin::DashPlugin;
 pub use scan::{Ci, Item, Project, ProjectState, PullRequest, Section};
@@ -72,6 +74,8 @@ pub struct Options {
     pub sessions: bool,
     /// Rewrite the workspace config for projects whose tier is due a move.
     pub retier: bool,
+    /// Add up what Claude Code has cost from its session transcripts.
+    pub cost: bool,
 }
 
 /// What became of the GitHub half of a read.
@@ -101,6 +105,8 @@ pub struct Snapshot {
     /// Open issues, newest first.
     pub issues: Vec<Issue>,
     pub sessions: Vec<Session>,
+    /// What Claude Code has cost, from its transcripts; `None` when not read.
+    pub cost: Option<Cost>,
     /// Projects whose tier label no longer matches what was read of them.
     pub retier: Vec<Move>,
     pub github: GitHub,
@@ -209,8 +215,9 @@ pub fn gather(config: &RuntimeConfig, options: Options) -> Result<Snapshot> {
         .map(|repo| (repo.slug.to_lowercase(), repo.project.clone()))
         .collect();
 
-    // GitHub and the session list do not depend on each other: ask together.
-    let (prs, issues, sessions) = std::thread::scope(|scope| {
+    // GitHub, the session list and the transcripts do not depend on each other:
+    // read together.
+    let (prs, issues, sessions, cost) = std::thread::scope(|scope| {
         let prs = scope.spawn(|| options.github.then(|| github::read_prs(&repos)));
         let issues = scope.spawn(|| options.github.then(|| github::read_issues(&repos)));
         let sessions = scope.spawn(|| {
@@ -218,10 +225,12 @@ pub fn gather(config: &RuntimeConfig, options: Options) -> Result<Snapshot> {
                 .sessions
                 .then(|| sessions::read(&root, &keys, &slugs))
         });
+        let cost = scope.spawn(|| options.cost.then(|| cost::read(&root, &keys, &slugs)));
         (
             prs.join().ok().flatten(),
             issues.join().ok().flatten(),
             sessions.join().ok().flatten(),
+            cost.join().ok().flatten().flatten(),
         )
     });
 
@@ -342,6 +351,7 @@ pub fn gather(config: &RuntimeConfig, options: Options) -> Result<Snapshot> {
         at_rest,
         issues,
         sessions,
+        cost,
         retier,
         github: GitHub {
             asked: options.github,

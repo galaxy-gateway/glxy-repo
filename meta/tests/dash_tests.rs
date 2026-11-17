@@ -58,6 +58,8 @@ fn dash(dir: &Path, args: &[&str]) -> String {
         .arg("dash")
         .args(args)
         .args(["--no-github", "--no-sessions"])
+        // Cost is read from this folder alone, never the real transcripts.
+        .env("CLAUDE_CONFIG_DIR", dir.join("claude"))
         .stdin(Stdio::null())
         .output()
         .expect("meta runs");
@@ -209,4 +211,69 @@ fn summary_groups_projects_by_tier() {
     assert!(at("Active (2)") < at("No tier (1)"));
     assert!(text.contains("Tier due  old active to dormant"), "{text}");
     assert!(text.contains("apply with --retier"), "{text}");
+}
+
+#[test]
+fn cost_is_summed_from_transcripts_by_project() {
+    if !git_available() {
+        return;
+    }
+    let tmp = workspace();
+    let root = tmp.path().canonicalize().unwrap();
+    let reply = |id: &str, cwd: &Path, model: &str| {
+        serde_json::json!({
+            "type": "assistant", "requestId": format!("req-{id}"), "sessionId": "aaa11111-0000",
+            "cwd": cwd, "timestamp": "2026-11-12T10:00:00Z",
+            "message": { "id": format!("msg-{id}"), "model": model,
+                         "usage": { "input_tokens": 1_000_000, "output_tokens": 0 } }
+        })
+        .to_string()
+    };
+    let transcripts = tmp
+        .path()
+        .join("claude")
+        .join("projects")
+        .join("some-session");
+    fs::create_dir_all(&transcripts).unwrap();
+    fs::write(
+        transcripts.join("aaa11111.jsonl"),
+        [
+            reply("1", &root.join("app"), "claude-sonnet-5-5"),
+            // The same reply written twice counts once.
+            reply("1", &root.join("app"), "claude-sonnet-5-5"),
+            reply("2", &root, "claude-sonnet-5-5"),
+            reply(
+                "3",
+                Path::new("/somewhere/else/scratch"),
+                "claude-mystery-9",
+            ),
+            // A line still being written is left for the next read.
+            "{\"type\":\"assistant\",\"message\":{\"usage\"".to_string(),
+        ]
+        .join("\n"),
+    )
+    .unwrap();
+
+    let snapshot: Value = serde_json::from_str(&dash(tmp.path(), &["--json"])).unwrap();
+    let rows = snapshot["cost"]["rows"].as_array().unwrap();
+    let usd = |bucket: &str| {
+        rows.iter()
+            .find(|row| row["bucket"] == bucket)
+            .unwrap_or_else(|| panic!("no {bucket} in {rows:?}"))["usd"]
+            .as_f64()
+            .unwrap()
+    };
+    assert_eq!(rows.len(), 3);
+    assert!((usd("app") - 2.0).abs() < 1e-9);
+    assert!((usd("@root") - 2.0).abs() < 1e-9);
+    assert_eq!(usd("@out:scratch"), 0.0);
+    assert_eq!(
+        snapshot["cost"]["unpriced"],
+        serde_json::json!(["claude-mystery-9"])
+    );
+    assert_eq!(snapshot["cost"]["sessions"][0]["tokens"], 3_000_000);
+
+    // With no transcript folder, or when told not to, there is no cost at all.
+    let skipped: Value = serde_json::from_str(&dash(tmp.path(), &["--json", "--no-cost"])).unwrap();
+    assert!(skipped["cost"].is_null());
 }

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- *(dash)* `meta dash` reads the whole workspace once and reports it: each project's tier (the `active`, `maintained` and `dormant` labels) and git state, the branches in flight with their pull requests and checks, open issues, and the Claude Code sessions running in it. `--json` prints everything; without it, a summary by tier. `--retier` rewrites tier labels that are due a move (work in flight makes a project active; 90 and 180 days without a commit move it down), `--no-github` and `--no-sessions` skip the `gh` and `claude` CLIs. This is the data half of the workspace dashboard; cost is not read yet (#210)
+- *(dash)* `meta dash` reads the whole workspace once and reports it: each project's tier (the `active`, `maintained` and `dormant` labels) and git state, the branches in flight with their pull requests and checks, open issues, and the Claude Code sessions running in it. `--json` prints everything; without it, a summary by tier. `--retier` rewrites tier labels that are due a move (work in flight makes a project active; 90 and 180 days without a commit move it down), `--no-github` and `--no-sessions` skip the `gh` and `claude` CLIs. It also sums what Claude Code has cost from the session transcripts on this machine, by project, day and model, at prices listed in the binary (`--no-cost` skips it). This is the data half of the workspace dashboard (#210)
 
 ## [0.85.0] - 2026-11-12
 
