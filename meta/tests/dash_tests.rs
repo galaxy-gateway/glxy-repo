@@ -456,7 +456,8 @@ fn a_retier_does_not_commit_over_work_under_way() {
 /// `wip` (not merged), and main itself one commit past the merge.
 fn workspace_with_remote() -> (TempDir, std::path::PathBuf) {
     let tmp = TempDir::new().unwrap();
-    let root = tmp.path().canonicalize().unwrap();
+    // Not canonicalized: on Windows that gives a \\?\ path, which git will not clone from.
+    let root = tmp.path().to_path_buf();
     let origin = root.join("origin.git");
     let seed = root.join("seed");
     init_repo(&seed, 0);
