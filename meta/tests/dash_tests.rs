@@ -450,3 +450,189 @@ fn a_retier_does_not_commit_over_work_under_way() {
     );
     assert_eq!(git_out(tmp.path(), &["rev-list", "--count", "HEAD"]), "1");
 }
+
+/// A workspace whose `app` project is a clone of a bare repository standing
+/// in for a remote, with three branches there: `done` (merged into main),
+/// `wip` (not merged), and main itself one commit past the merge.
+fn workspace_with_remote() -> (TempDir, std::path::PathBuf) {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path().canonicalize().unwrap();
+    let origin = root.join("origin.git");
+    let seed = root.join("seed");
+    init_repo(&seed, 0);
+    run_git(&seed, 0, &["checkout", "-q", "-b", "done"]);
+    run_git(
+        &seed,
+        0,
+        &["commit", "-q", "--allow-empty", "-m", "done work"],
+    );
+    run_git(&seed, 0, &["checkout", "-q", "main"]);
+    run_git(
+        &seed,
+        0,
+        &["merge", "-q", "--no-ff", "done", "-m", "merge done"],
+    );
+    run_git(&seed, 0, &["checkout", "-q", "-b", "wip"]);
+    run_git(
+        &seed,
+        0,
+        &["commit", "-q", "--allow-empty", "-m", "unfinished"],
+    );
+    run_git(&seed, 0, &["checkout", "-q", "main"]);
+    run_git(
+        &root,
+        0,
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            seed.to_str().unwrap(),
+            origin.to_str().unwrap(),
+        ],
+    );
+    run_git(&root, 0, &["clone", "-q", origin.to_str().unwrap(), "app"]);
+    fs::write(
+        root.join(".meta"),
+        r#"{ "projects": { "app": "file:///origin.git" } }"#,
+    )
+    .unwrap();
+    (tmp, root)
+}
+
+#[test]
+fn only_a_merged_branch_still_where_it_was_seen_is_deleted() {
+    use metarepo::plugins::dash::branches::{list, prune, Kind};
+    if !git_available() {
+        return;
+    }
+    let (_tmp, root) = workspace_with_remote();
+    let origin = root.join("origin.git");
+    let log = root.join("pruned.log");
+
+    let found = list(&root, "app").unwrap();
+    let told: Vec<(&str, Kind)> = found.iter().map(|b| (b.name.as_str(), b.kind)).collect();
+    // No GitHub to ask: git alone vouches for what is in main, and for nothing else.
+    assert_eq!(told, vec![("done", Kind::Merged), ("wip", Kind::Unknown)]);
+    let done = found[0].clone();
+    assert_eq!(done.ahead, 0);
+    assert_eq!(found[1].ahead, 1);
+
+    // Someone pushes to `done` after it was looked at: it must stay.
+    let other = root.join("other");
+    run_git(
+        &root,
+        0,
+        &["clone", "-q", origin.to_str().unwrap(), "other"],
+    );
+    run_git(&other, 0, &["checkout", "-q", "done"]);
+    run_git(
+        &other,
+        0,
+        &["commit", "-q", "--allow-empty", "-m", "late work"],
+    );
+    run_git(&other, 0, &["push", "-q", "origin", "done"]);
+    let said = prune(
+        &root,
+        "app",
+        &[(done.name.clone(), done.sha.clone())],
+        Some(&log),
+    );
+    assert_eq!(
+        said,
+        "deleted 0 remote branches of app · kept done (changed since, or refused)"
+    );
+    assert!(git_out(&origin, &["branch", "--list", "done"]).contains("done"));
+    assert!(!log.exists());
+
+    // Looked at again, it is no longer merged. Put it back as it was, and it goes.
+    run_git(&root.join("app"), 0, &["fetch", "-q", "origin"]);
+    assert!(list(&root, "app")
+        .unwrap()
+        .iter()
+        .all(|b| b.kind != Kind::Merged));
+    run_git(
+        &other,
+        0,
+        &[
+            "push",
+            "-q",
+            "--force",
+            "origin",
+            &format!("{}:refs/heads/done", done.sha),
+        ],
+    );
+    run_git(&root.join("app"), 0, &["fetch", "-q", "origin"]);
+    let said = prune(
+        &root,
+        "app",
+        &[(done.name.clone(), done.sha.clone())],
+        Some(&log),
+    );
+    assert!(
+        said.starts_with("deleted 1 remote branch of app · logged in "),
+        "{said}"
+    );
+    assert_eq!(git_out(&origin, &["branch", "--list", "done"]), "");
+    // The unmerged branch was never touched, and the log says how to restore the other.
+    assert!(git_out(&origin, &["branch", "--list", "wip"]).contains("wip"));
+    let logged = fs::read_to_string(&log).unwrap();
+    assert!(
+        logged
+            .trim_end()
+            .ends_with(&format!(" app done {}", done.sha)),
+        "{logged}"
+    );
+}
+
+#[test]
+fn opening_a_pull_request_refuses_what_is_not_ready_and_pushes_what_is() {
+    use metarepo::plugins::dash::branches::{finish, Finish};
+    if !git_available() {
+        return;
+    }
+    let (_tmp, root) = workspace_with_remote();
+    let (app, origin) = (root.join("app"), root.join("origin.git"));
+    let open = Finish::OpenPr { issue: None };
+    assert_eq!(
+        finish(&root, "app", "main", &open, None).unwrap_err(),
+        "main is the default branch"
+    );
+    assert_eq!(
+        finish(&root, "nope", "x", &open, None).unwrap_err(),
+        "no project named nope"
+    );
+    assert_eq!(
+        finish(&root, "app", "feat/1-x", &open, None).unwrap_err(),
+        "no worktree has feat/1-x checked out"
+    );
+
+    run_git(&app, 0, &["checkout", "-q", "-b", "feat/1-x"]);
+    assert_eq!(
+        finish(&root, "app", "feat/1-x", &open, None).unwrap_err(),
+        "feat/1-x has no commits beyond main"
+    );
+    fs::write(app.join("new.txt"), "x").unwrap();
+    assert_eq!(
+        finish(&root, "app", "feat/1-x", &open, None).unwrap_err(),
+        "1 uncommitted files in the worktree: commit or discard them first"
+    );
+    run_git(&app, 0, &["add", "new.txt"]);
+    run_git(&app, 0, &["commit", "-q", "-m", "feat: x"]);
+    // The push goes through; this stand-in remote is not GitHub, so it stops there and says so.
+    assert_eq!(
+        finish(&root, "app", "feat/1-x", &open, None).unwrap_err(),
+        "pushed, but the project is not on GitHub: no pull request"
+    );
+    assert!(git_out(&origin, &["branch", "--list", "feat/1-x"]).contains("feat/1-x"));
+
+    // Clearing up needs a merged pull request to vouch for the work: with none, nothing goes.
+    assert_eq!(
+        finish(&root, "app", "feat/1-x", &Finish::Cleanup, None).unwrap_err(),
+        "no merged pull request for feat/1-x: nothing was removed"
+    );
+    assert!(git_out(&origin, &["branch", "--list", "feat/1-x"]).contains("feat/1-x"));
+    assert_eq!(
+        git_out(&app, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "feat/1-x"
+    );
+}

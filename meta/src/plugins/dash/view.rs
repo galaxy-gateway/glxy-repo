@@ -135,6 +135,10 @@ pub struct Row {
     pub act: Option<Act>,
     /// The issue the row is about, by project and number.
     pub issue: Option<(String, u64)>,
+    /// The project the row is, where it is one.
+    pub project: Option<String>,
+    /// The branch on the board the row is, by project and branch.
+    pub branch: Option<(String, String)>,
 }
 
 impl Row {
@@ -385,6 +389,8 @@ impl<'a> Out<'a> {
             detail: Vec::new(),
             act: None,
             issue: None,
+            project: None,
+            branch: None,
         });
     }
 
@@ -411,6 +417,8 @@ impl<'a> Out<'a> {
             detail: Vec::new(),
             act: Some(Act::Fold(key.to_string())),
             issue: None,
+            project: None,
+            branch: None,
         });
         is_open
     }
@@ -429,6 +437,8 @@ impl<'a> Out<'a> {
             detail,
             act,
             issue: None,
+            project: None,
+            branch: None,
         });
     }
 
@@ -521,6 +531,9 @@ impl<'a> Out<'a> {
         }
         let act = own.first().map(|session| self.attach(session));
         self.item(indent, cells, detail, act);
+        if let Some(row) = self.rows.last_mut() {
+            row.branch = Some((item.project.clone(), item.branch.clone()));
+        }
     }
 
     fn issue(&mut self, indent: u16, issue: &Issue, with_project: bool, tagged: bool) {
@@ -872,6 +885,9 @@ fn project_row(out: &mut Out, project: &Project) {
         detail.push(format!("… and {} more changed", project.dirty as usize - 3));
     }
     out.item(1, cells, detail, None);
+    if let Some(row) = out.rows.last_mut() {
+        row.project = Some(project.name.clone());
+    }
 }
 
 /// What the workspace is due, before its projects: tier moves to apply, and
@@ -1481,6 +1497,8 @@ fn cost(out: &mut Out) {
                 detail: Vec::new(),
                 act: Some(Act::Fold(key)),
                 issue: None,
+                project: None,
+                branch: None,
             });
             if is_open {
                 let mut parts: Vec<(&String, &(f64, u64))> = sum.parts.iter().collect();
@@ -1603,6 +1621,8 @@ fn workspaces(out: &mut Out, found: Option<&[Workspace]>) {
             ],
             act: (!is_here).then(|| Act::Switch(workspace.config.clone())),
             issue: None,
+            project: None,
+            branch: None,
         });
         for (n, tier) in Tier::ALL.into_iter().enumerate() {
             if workspace.tiers[n] == 0 {
@@ -1705,6 +1725,8 @@ pub fn rows(view: View, snapshot: &Snapshot, ui: &Ui, found: Option<&[Workspace]
             detail: Vec::new(),
             act: None,
             issue: None,
+            project: None,
+            branch: None,
         }];
     }
     kept

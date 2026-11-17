@@ -15,6 +15,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod actions;
+pub mod branches;
 mod cost;
 mod drift;
 mod github;
