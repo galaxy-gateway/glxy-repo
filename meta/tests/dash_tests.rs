@@ -324,3 +324,129 @@ fn starting_work_makes_a_branch_and_worktree_through_meta() {
         "no project named nope"
     );
 }
+
+/// The workspace as a git repository of its own, with a README whose project
+/// table carries tiers, all committed.
+fn committed_workspace() -> TempDir {
+    let tmp = workspace();
+    let root = tmp.path();
+    fs::write(root.join(".gitignore"), "app/\nold/\nlib/\nclaude/\n").unwrap();
+    fs::write(
+        root.join("README.md"),
+        "# Workspace\n\n| Project | Tier | Description |\n| --- | --- | --- |\n| [app](https://github.com/example/app) | active | The app |\n| [old](https://github.com/example/old) | active | Not touched lately |\n| lib | | No tier |\n",
+    )
+    .unwrap();
+    run_git(root, 0, &["init", "-q", "-b", "main"]);
+    run_git(root, 0, &["add", "-A"]);
+    run_git(root, 0, &["commit", "-q", "-m", "init"]);
+    tmp
+}
+
+fn git_out(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// `meta dash` with the committer set, as the commit it makes needs one.
+fn dash_committing(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new(META_BIN)
+        .current_dir(dir)
+        .arg("dash")
+        .args(args)
+        .args(["--no-github", "--no-sessions", "--no-cost"])
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@example.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@example.com")
+        .env("GIT_CONFIG_COUNT", "1")
+        .env("GIT_CONFIG_KEY_0", "commit.gpgsign")
+        .env("GIT_CONFIG_VALUE_0", "false")
+        .stdin(Stdio::null())
+        .output()
+        .expect("meta runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+#[test]
+fn a_retier_is_one_commit_of_the_config_and_the_readme() {
+    if !git_available() {
+        return;
+    }
+    let tmp = committed_workspace();
+    let root = tmp.path();
+    let snapshot: Value =
+        serde_json::from_str(&dash_committing(root, &["--json", "--retier", "--commit"])).unwrap();
+    assert_eq!(snapshot["retier"][0]["applied"], true);
+    let note = snapshot["notes"][0].as_str().unwrap();
+    assert!(
+        note.starts_with("retiered old to dormant · README updated · committed as "),
+        "{note}"
+    );
+
+    assert_eq!(
+        git_out(root, &["log", "-1", "--format=%s"]),
+        "chore(workspace): retier old"
+    );
+    assert_eq!(git_out(root, &["rev-list", "--count", "HEAD"]), "2");
+    let mut files: Vec<String> = git_out(root, &["show", "--name-only", "--format=", "HEAD"])
+        .lines()
+        .map(String::from)
+        .collect();
+    files.sort();
+    assert_eq!(files, vec![".meta", "README.md"]);
+    assert_eq!(git_out(root, &["status", "--porcelain"]), "");
+    let readme = fs::read_to_string(root.join("README.md")).unwrap();
+    assert!(
+        readme.contains("| [old](https://github.com/example/old) | dormant | Not touched lately |")
+    );
+    // Rows that did not move, and a project with no tier, are as they were.
+    assert!(readme.contains("| [app](https://github.com/example/app) | active | The app |"));
+    assert!(readme.contains("| lib | | No tier |"));
+}
+
+#[test]
+fn a_retier_does_not_commit_over_work_under_way() {
+    if !git_available() {
+        return;
+    }
+    let tmp = committed_workspace();
+    let root = tmp.path();
+    let readme = root.join("README.md");
+    fs::write(
+        &readme,
+        format!(
+            "{}\nA line someone is still writing.\n",
+            fs::read_to_string(&readme).unwrap()
+        ),
+    )
+    .unwrap();
+
+    let snapshot: Value =
+        serde_json::from_str(&dash_committing(root, &["--json", "--retier", "--commit"])).unwrap();
+    let note = snapshot["notes"][0].as_str().unwrap();
+    assert_eq!(note, "retiered old to dormant · README updated · not committed: .meta or README.md already had changes");
+    // The labels and the README are changed, the half-written line is kept, and nothing is committed.
+    assert_eq!(git_out(root, &["rev-list", "--count", "HEAD"]), "1");
+    let now = fs::read_to_string(&readme).unwrap();
+    assert!(now.contains("| dormant |") && now.contains("A line someone is still writing."));
+
+    // Without --commit nothing is committed either, and no reason is owed.
+    let tmp = committed_workspace();
+    let snapshot: Value =
+        serde_json::from_str(&dash_committing(tmp.path(), &["--json", "--retier"])).unwrap();
+    assert_eq!(
+        snapshot["notes"][0],
+        "retiered old to dormant · README updated · not committed"
+    );
+    assert_eq!(git_out(tmp.path(), &["rev-list", "--count", "HEAD"]), "1");
+}

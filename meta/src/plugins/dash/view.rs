@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use super::start::Wanted;
 use super::workspaces::Workspace;
-use super::{Ci, Issue, Item, Project, ProjectState, Section, Session, Snapshot, Tier};
+use super::{Ci, Issue, Item, Move, Project, ProjectState, Section, Session, Snapshot, Tier};
 
 /// The views, in tab order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -121,6 +121,8 @@ pub enum Act {
     },
     /// Start work on an issue: a worktree, and a session on it.
     Start(Wanted),
+    /// Apply the tier moves that are due, and commit them.
+    Retier(Vec<Move>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -855,7 +857,90 @@ fn project_row(out: &mut Out, project: &Project) {
     out.item(1, cells, detail, None);
 }
 
+/// What the workspace is due, before its projects: tier moves to apply, and
+/// where it has drifted from the account it is a view of.
+fn upkeep(out: &mut Out) {
+    let snapshot = out.snapshot;
+    if !snapshot.retier.is_empty() {
+        let moves: Vec<String> = snapshot
+            .retier
+            .iter()
+            .map(|one| {
+                format!(
+                    "{} {} to {}",
+                    one.project,
+                    one.from.as_str(),
+                    one.to.as_str()
+                )
+            })
+            .collect();
+        let due = if moves.len() == 1 {
+            "1 project is"
+        } else {
+            &format!("{} projects are", moves.len())
+        };
+        let mut detail: Vec<String> = snapshot
+            .retier
+            .iter()
+            .map(|one| {
+                if one.to == Tier::Active {
+                    format!("{}  work in flight makes it active again", one.project)
+                } else {
+                    format!(
+                        "{}  {} days without a commit and nothing in flight",
+                        one.project, one.quiet_days
+                    )
+                }
+            })
+            .collect();
+        detail.truncate(5);
+        detail.push(
+            "enter applies them: the labels, the README's Tier column, and one commit".to_string(),
+        );
+        out.item(
+            0,
+            vec![
+                (format!("{due} due a tier move: "), Tone::Warn),
+                (moves.join(", "), Tone::Plain),
+            ],
+            detail,
+            Some(Act::Retier(snapshot.retier.clone())),
+        );
+    }
+    if let Some(drift) = snapshot.drift.as_ref().filter(|drift| !drift.is_empty()) {
+        for (list, words, fix) in [
+            (
+                &drift.missing,
+                format!("In {} but not here: ", drift.org),
+                "  (meta repo add)",
+            ),
+            (
+                &drift.archived,
+                "Archived on GitHub: ".to_string(),
+                "  (meta repo remove)",
+            ),
+            (
+                &drift.gone,
+                format!("Not in {} under that name: ", drift.org),
+                "  (renamed or removed)",
+            ),
+        ] {
+            if !list.is_empty() {
+                out.note(
+                    0,
+                    vec![
+                        (words, Tone::Warn),
+                        (list.join(", "), Tone::Plain),
+                        (fix.to_string(), Tone::Dim),
+                    ],
+                );
+            }
+        }
+    }
+}
+
 fn projects(out: &mut Out) {
+    upkeep(out);
     let snapshot = out.snapshot;
     let mut list: Vec<&Project> = snapshot.projects.iter().collect();
     list.sort_by_key(|project| project.name.to_lowercase());
@@ -1789,6 +1874,7 @@ pub(super) mod tests {
                 unpriced: vec!["claude-mystery-9".into()],
             }),
             retier: Vec::new(),
+            drift: None,
             github: GitHub {
                 asked: true,
                 failed: Vec::new(),
@@ -2095,5 +2181,40 @@ pub(super) mod tests {
             .find(|row| row.text().contains("#254"))
             .unwrap();
         assert!(matches!(&row.act, Some(Act::Attach { name, .. }) if name == "claw-254"));
+    }
+
+    #[test]
+    fn projects_lead_with_what_the_workspace_is_due() {
+        let (mut snap, ui) = (snapshot(), Ui::default());
+        snap.retier = vec![Move {
+            project: "earth".into(),
+            from: Tier::Maintained,
+            to: Tier::Dormant,
+            quiet_days: 200,
+            applied: false,
+        }];
+        snap.drift = Some(crate::plugins::dash::Drift {
+            org: "org".into(),
+            missing: vec!["new-thing".into()],
+            archived: Vec::new(),
+            gone: vec!["renamed".into()],
+        });
+        let found = rows(View::Projects, &snap, &ui, None);
+        let lines = texts(&found);
+        assert_eq!(
+            lines[0],
+            "1 project is due a tier move: earth maintained to dormant"
+        );
+        assert!(matches!(&found[0].act, Some(Act::Retier(moves)) if moves.len() == 1));
+        assert!(found[0].detail[0].contains("200 days without a commit"));
+        assert_eq!(lines[1], "In org but not here: new-thing  (meta repo add)");
+        assert_eq!(
+            lines[2],
+            "Not in org under that name: renamed  (renamed or removed)"
+        );
+        assert!(at(&lines, "Not in org") < at(&lines, "▾ Active  1"));
+        // A workspace in step says nothing above its projects.
+        let calm = texts(&rows(View::Projects, &snapshot(), &ui, None));
+        assert_eq!(calm[0], "▾ Active  1");
     }
 }

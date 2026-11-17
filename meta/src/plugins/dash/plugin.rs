@@ -66,7 +66,14 @@ impl MetaPlugin for DashPlugin {
                     Arg::new("retier")
                         .long("retier")
                         .action(ArgAction::SetTrue)
-                        .help("Rewrite tier labels that are due a move (does not commit)"),
+                        .help("Apply the tier moves that are due: the labels, and the README's Tier column"),
+                )
+                .arg(
+                    Arg::new("commit")
+                        .long("commit")
+                        .action(ArgAction::SetTrue)
+                        .requires("retier")
+                        .help("With --retier: commit the config and README change (never pushes)"),
                 )
                 .after_long_help(metarepo_core::format_help_description(
                     "Read the whole workspace once and report it: each project's tier and git\n\
@@ -79,10 +86,14 @@ impl MetaPlugin for DashPlugin {
                      in flight (unpushed commits, extra worktrees, recently committed branches)\n\
                      is due active; one with none is due maintained after 90 days without a\n\
                      commit on any branch and dormant after 180. Moves are only reported unless\n\
-                     --retier is given.\n\
+                     --retier is given. --retier also brings the Tier column of the README's project\n\
+                     tables up to date, and with --commit makes one commit of the two files.\n\
                      \n\
                      Pull requests and issues are asked through the gh CLI, and sessions through\n\
-                     the claude CLI; each is skipped with a note when its CLI is missing. Cost is\n\
+                     the claude CLI; each is skipped with a note when its CLI is missing. Where most\n\
+                     projects come from one GitHub account, its repositories are compared with the\n\
+                     workspace: ones not here, and projects here that are archived or gone there.\n\
+                     Cost is\n\
                      summed from the session transcripts Claude Code keeps on this machine, by\n\
                      project, day and model, at the prices listed in this version of meta.\n\
                      \n\
@@ -91,7 +102,7 @@ impl MetaPlugin for DashPlugin {
                        meta dash --summary               Summary by tier\n  \
                        meta dash --json                  Everything, as JSON\n  \
                        meta dash --json --no-github      Local state only, no network\n  \
-                       meta dash --retier                Apply the tier moves that are due\n",
+                       meta dash --retier --commit       Apply the tier moves that are due, as one commit\n",
                 )),
         )
     }
@@ -110,6 +121,7 @@ impl MetaPlugin for DashPlugin {
                 sessions: !matches.get_flag("no-sessions"),
                 retier: matches.get_flag("retier"),
                 cost: !matches.get_flag("no-cost"),
+                commit: matches.get_flag("commit"),
             },
         )?;
         if matches.get_flag("json") {
@@ -271,10 +283,7 @@ pub fn summary(snapshot: &Snapshot) -> String {
     for one in &snapshot.retier {
         let (from, to) = (one.from.as_str(), one.to.as_str());
         out.push_str(&if one.applied {
-            format!(
-                "Retiered  {} {from} to {to} (the workspace config changed; commit it)\n",
-                one.project
-            )
+            format!("Retiered  {} {from} to {to}\n", one.project)
         } else {
             let why = if one.to == Tier::Active {
                 "it has work in flight".to_string()
@@ -286,6 +295,17 @@ pub fn summary(snapshot: &Snapshot) -> String {
                 one.project
             )
         });
+    }
+    if let Some(drift) = snapshot.drift.as_ref().filter(|drift| !drift.is_empty()) {
+        for (list, words) in [
+            (&drift.missing, format!("In {} but not here", drift.org)),
+            (&drift.archived, "Archived on GitHub".to_string()),
+            (&drift.gone, format!("Not in {} under that name", drift.org)),
+        ] {
+            if !list.is_empty() {
+                out.push_str(&format!("Drift     {words}: {}\n", list.join(", ")));
+            }
+        }
     }
     if !snapshot.github.failed.is_empty() {
         out.push_str(&format!(

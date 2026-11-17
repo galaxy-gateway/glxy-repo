@@ -15,9 +15,11 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod cost;
+mod drift;
 mod github;
 pub mod host;
 mod plugin;
+pub mod retier;
 mod scan;
 mod sessions;
 pub mod start;
@@ -27,6 +29,7 @@ mod view;
 mod workspaces;
 
 pub use cost::{Cost, CostRow, SessionCost};
+pub use drift::Drift;
 pub use github::Issue;
 pub use plugin::DashPlugin;
 pub use scan::{Ci, Item, Project, ProjectState, PullRequest, Section};
@@ -81,6 +84,8 @@ pub struct Options {
     pub retier: bool,
     /// Add up what Claude Code has cost from its session transcripts.
     pub cost: bool,
+    /// With `retier`: commit the config and README change it makes.
+    pub commit: bool,
 }
 
 /// What became of the GitHub half of a read.
@@ -114,6 +119,9 @@ pub struct Snapshot {
     pub cost: Option<Cost>,
     /// Projects whose tier label no longer matches what was read of them.
     pub retier: Vec<Move>,
+    /// How the workspace differs from the GitHub account most of it comes
+    /// from; `None` when GitHub was not asked or it is a view of no one account.
+    pub drift: Option<Drift>,
     pub github: GitHub,
     /// Things that could not be read, in plain words.
     pub notes: Vec<String>,
@@ -222,7 +230,10 @@ pub fn gather(config: &RuntimeConfig, options: Options) -> Result<Snapshot> {
 
     // GitHub, the session list and the transcripts do not depend on each other:
     // read together.
-    let (prs, issues, sessions, cost) = std::thread::scope(|scope| {
+    let own_slug = scan::git(&root, &["remote", "get-url", "origin"])
+        .as_deref()
+        .and_then(scan::github_slug);
+    let (prs, issues, sessions, cost, drift) = std::thread::scope(|scope| {
         let prs = scope.spawn(|| options.github.then(|| github::read_prs(&repos)));
         let issues = scope.spawn(|| options.github.then(|| github::read_issues(&repos)));
         let sessions = scope.spawn(|| {
@@ -231,11 +242,17 @@ pub fn gather(config: &RuntimeConfig, options: Options) -> Result<Snapshot> {
                 .then(|| sessions::read(&root, &keys, &slugs))
         });
         let cost = scope.spawn(|| options.cost.then(|| cost::read(&root, &keys, &slugs)));
+        let drift = scope.spawn(|| {
+            options
+                .github
+                .then(|| drift::read(&repos, own_slug.as_deref()))
+        });
         (
             prs.join().ok().flatten(),
             issues.join().ok().flatten(),
             sessions.join().ok().flatten(),
             cost.join().ok().flatten().flatten(),
+            drift.join().ok().flatten().flatten(),
         )
     });
 
@@ -335,7 +352,9 @@ pub fn gather(config: &RuntimeConfig, options: Options) -> Result<Snapshot> {
             .meta_file_path
             .as_ref()
             .ok_or_else(|| anyhow!("No workspace config found. Run 'meta init' first."))?;
-        tiers::apply(path, &retier)?;
+        let outcome =
+            retier::retier(&root, path, &retier, options.commit).map_err(|why| anyhow!(why))?;
+        notes.push(outcome.said(&retier));
         for one in &mut retier {
             one.applied = true;
             if let Some(project) = projects.iter_mut().find(|p| p.name == one.project) {
@@ -358,6 +377,7 @@ pub fn gather(config: &RuntimeConfig, options: Options) -> Result<Snapshot> {
         sessions,
         cost,
         retier,
+        drift,
         github: GitHub {
             asked: options.github,
             failed,
