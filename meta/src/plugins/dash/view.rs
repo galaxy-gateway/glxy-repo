@@ -5,6 +5,7 @@ use chrono::{Local, NaiveDate, TimeZone};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
+use super::start::Wanted;
 use super::workspaces::Workspace;
 use super::{Ci, Issue, Item, Project, ProjectState, Section, Session, Snapshot, Tier};
 
@@ -103,6 +104,14 @@ pub enum Act {
     Fold(String),
     /// Read the workspace with this config file instead.
     Switch(PathBuf),
+    /// Bring a Claude session to the front: its short id, name and folder.
+    Attach {
+        id: String,
+        name: String,
+        cwd: String,
+    },
+    /// Start work on an issue: a worktree, and a session on it.
+    Start(Wanted),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,13 +400,19 @@ impl<'a> Out<'a> {
         is_open
     }
 
-    fn item(&mut self, indent: u16, cells: Vec<(String, Tone)>, detail: Vec<String>) {
+    fn item(
+        &mut self,
+        indent: u16,
+        cells: Vec<(String, Tone)>,
+        detail: Vec<String>,
+        act: Option<Act>,
+    ) {
         self.rows.push(Row {
             kind: Kind::Item,
             indent,
             cells,
             detail,
-            act: None,
+            act,
         });
     }
 
@@ -473,18 +488,23 @@ impl<'a> Out<'a> {
                 }
             ));
         }
-        for session in self
-            .snapshot
+        let snapshot = self.snapshot;
+        let own: Vec<&Session> = snapshot
             .sessions
             .iter()
-            .filter(|s| s.project == item.project && s.branch == item.branch)
-        {
+            .filter(|s| {
+                super::sessions::item_of(s, &snapshot.board)
+                    .is_some_and(|its| its.key() == item.key())
+            })
+            .collect();
+        for session in &own {
             detail.push(format!(
-                "session  {} · {} · claude attach {}",
-                session.name, session.status, session.id
+                "session  {} · {} · enter attaches it",
+                session.name, session.status
             ));
         }
-        self.item(indent, cells, detail);
+        let act = own.first().map(|session| attach(session));
+        self.item(indent, cells, detail, act);
     }
 
     fn issue(&mut self, indent: u16, issue: &Issue, with_project: bool, tagged: bool) {
@@ -554,7 +574,19 @@ impl<'a> Out<'a> {
         {
             detail.push(format!("https://github.com/{slug}/issues/{}", issue.number));
         }
-        self.item(indent, cells, detail);
+        // One branch an issue: what is already in flight is not started again.
+        let act = (!issue.in_flight).then(|| {
+            detail.push(
+                "enter starts work on it: a worktree, and a Claude session there".to_string(),
+            );
+            Act::Start(Wanted {
+                project: issue.project.clone(),
+                number: issue.number,
+                title: issue.title.clone(),
+                labels: issue.labels.clone(),
+            })
+        });
+        self.item(indent, cells, detail, act);
     }
 
     fn session(&mut self, indent: u16, session: &Session, tagged: bool) {
@@ -596,7 +628,7 @@ impl<'a> Out<'a> {
                 session.kind, session.id, session.status
             ),
             format!("folder  {}", session.cwd),
-            format!("attach  claude attach {}", session.id),
+            format!("attach  claude attach {} · enter does it", session.id),
         ];
         if let Some(cost) = cost {
             detail.push(format!(
@@ -605,7 +637,7 @@ impl<'a> Out<'a> {
                 compact(cost.tokens)
             ));
         }
-        self.item(indent, cells, detail);
+        self.item(indent, cells, detail, Some(attach(session)));
     }
 
     /// Lists under a heading, a tier at a time where tiers need saying.
@@ -633,6 +665,14 @@ impl<'a> Out<'a> {
                 each(self, indent, one);
             }
         }
+    }
+}
+
+fn attach(session: &Session) -> Act {
+    Act::Attach {
+        id: session.id.clone(),
+        name: session.name.clone(),
+        cwd: session.cwd.clone(),
     }
 }
 
@@ -725,7 +765,7 @@ fn project_row(out: &mut Out, project: &Project) {
         project.dirty,
         if project.bare { " · bare clone" } else { "" }
     ));
-    out.item(1, cells, detail);
+    out.item(1, cells, detail, None);
 }
 
 fn projects(out: &mut Out) {
@@ -1815,7 +1855,8 @@ pub(super) mod tests {
         assert!(busy
             .detail
             .iter()
-            .any(|line| line == "attach  claude attach claw-254"));
+            .any(|line| line == "attach  claude attach claw-254 · enter does it"));
+        assert!(matches!(&busy.act, Some(Act::Attach { id, .. }) if id == "claw-254"));
     }
 
     #[test]
