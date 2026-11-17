@@ -97,6 +97,13 @@ pub enum Kind {
     Note,
 }
 
+/// A prompt ready to send to a session, and what to call it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offer {
+    pub label: String,
+    pub prompt: String,
+}
+
 /// What Enter does on a row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Act {
@@ -109,6 +116,8 @@ pub enum Act {
         id: String,
         name: String,
         cwd: String,
+        /// Prompts worth sending it, from what its branch is doing.
+        offers: Vec<Offer>,
     },
     /// Start work on an issue: a worktree, and a session on it.
     Start(Wanted),
@@ -503,7 +512,7 @@ impl<'a> Out<'a> {
                 session.name, session.status
             ));
         }
-        let act = own.first().map(|session| attach(session));
+        let act = own.first().map(|session| self.attach(session));
         self.item(indent, cells, detail, act);
     }
 
@@ -574,18 +583,27 @@ impl<'a> Out<'a> {
         {
             detail.push(format!("https://github.com/{slug}/issues/{}", issue.number));
         }
-        // One branch an issue: what is already in flight is not started again.
-        let act = (!issue.in_flight).then(|| {
+        // One branch an issue: what is already in flight is not started
+        // again. Enter goes to the session at work on it, where there is one.
+        let act = if issue.in_flight {
+            self.session_on(issue).map(|session| {
+                detail.push(format!(
+                    "session  {} · {} · enter attaches it",
+                    session.name, session.status
+                ));
+                self.attach(session)
+            })
+        } else {
             detail.push(
                 "enter starts work on it: a worktree, and a Claude session there".to_string(),
             );
-            Act::Start(Wanted {
+            Some(Act::Start(Wanted {
                 project: issue.project.clone(),
                 number: issue.number,
                 title: issue.title.clone(),
                 labels: issue.labels.clone(),
-            })
-        });
+            }))
+        };
         self.item(indent, cells, detail, act);
     }
 
@@ -637,7 +655,84 @@ impl<'a> Out<'a> {
                 compact(cost.tokens)
             ));
         }
-        self.item(indent, cells, detail, Some(attach(session)));
+        let act = self.attach(session);
+        self.item(indent, cells, detail, Some(act));
+    }
+
+    /// Prompts worth sending the session on a branch: about its failing
+    /// checks, its review, and the issue its name leads with. Each is short
+    /// and says where to look, so it fits what a host will paste.
+    fn offers(&self, item: &Item) -> Vec<Offer> {
+        let slug = self
+            .snapshot
+            .projects
+            .iter()
+            .find(|p| p.name == item.project)
+            .and_then(|p| p.slug.clone())
+            .unwrap_or_else(|| item.project.clone());
+        let mut offers = Vec::new();
+        if let Some(pr) = &item.pr {
+            let n = pr.number;
+            if pr.ci == Ci::Fail {
+                offers.push(Offer {
+                    label: format!("Fix the failing checks on #{n}"),
+                    prompt: format!(
+                        "The checks on pull request #{n} of {slug} (branch {}) are failing. Find out why (gh pr checks {n} -R {slug}, then gh run view --log-failed for the run that failed), fix it in this worktree and commit. Do not push.",
+                        item.branch
+                    ),
+                });
+            }
+            offers.push(Offer {
+                label: format!("Address the review on #{n}"),
+                prompt: format!(
+                    "Pull request #{n} of {slug} (branch {}) has review comments. Read them (gh pr view {n} -R {slug} --comments, and gh api repos/{slug}/pulls/{n}/comments for the ones on lines), address each in this worktree and commit. Do not push.",
+                    item.branch
+                ),
+            });
+        }
+        if let Some(number) = super::github::issue_of_branch(&item.branch) {
+            let title = self
+                .snapshot
+                .issues
+                .iter()
+                .find(|i| i.project == item.project && i.number == number)
+                .map(|i| format!(": {}", i.title))
+                .unwrap_or_default();
+            offers.push(Offer {
+                label: format!("Check the work against issue #{number}"),
+                prompt: format!(
+                    "Read GitHub issue #{number} of {slug} again (gh issue view {number} -R {slug} --comments){title}. Check that the work on this branch covers all of it, and say what is left."
+                ),
+            });
+        }
+        offers
+    }
+
+    /// Enter on a session's row attaches it; with it go the prompts worth
+    /// sending it.
+    fn attach(&self, session: &Session) -> Act {
+        let offers = super::sessions::item_of(session, &self.snapshot.board)
+            .map(|item| self.offers(item))
+            .unwrap_or_default();
+        Act::Attach {
+            id: session.id.clone(),
+            name: session.name.clone(),
+            cwd: session.cwd.clone(),
+            offers,
+        }
+    }
+
+    /// The session at work on an issue, by the branch named for it.
+    fn session_on(&self, issue: &Issue) -> Option<&'a Session> {
+        let snapshot = self.snapshot;
+        let item = snapshot.board.iter().find(|item| {
+            item.project == issue.project
+                && super::github::issue_of_branch(&item.branch) == Some(issue.number)
+        })?;
+        snapshot.sessions.iter().find(|session| {
+            super::sessions::item_of(session, &snapshot.board)
+                .is_some_and(|its| its.key() == item.key())
+        })
     }
 
     /// Lists under a heading, a tier at a time where tiers need saying.
@@ -665,14 +760,6 @@ impl<'a> Out<'a> {
                 each(self, indent, one);
             }
         }
-    }
-}
-
-fn attach(session: &Session) -> Act {
-    Act::Attach {
-        id: session.id.clone(),
-        name: session.name.clone(),
-        cwd: session.cwd.clone(),
     }
 }
 
@@ -1952,5 +2039,61 @@ pub(super) mod tests {
             ),
             ("now".into(), "3d".into(), "3w".into(), "5mo".into())
         );
+    }
+
+    #[test]
+    fn a_session_is_offered_prompts_from_what_its_branch_is_doing() {
+        let (mut snap, ui) = (snapshot(), Ui::default());
+        // claw-254 is named for issue 254; its branch has a failing pull request.
+        snap.issues
+            .push(issue("claw", 254, None, "Provider test pane"));
+        snap.issues.last_mut().unwrap().in_flight = true;
+        let found = rows(View::Sessions, &snap, &ui, None);
+        let busy = found
+            .iter()
+            .find(|row| row.text().starts_with("claw-254"))
+            .unwrap();
+        let Some(Act::Attach { offers, .. }) = &busy.act else {
+            panic!("no attach on {busy:?}");
+        };
+        let labels: Vec<&str> = offers.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Fix the failing checks on #7",
+                "Address the review on #7",
+                "Check the work against issue #254"
+            ]
+        );
+        assert!(offers[0].prompt.contains("gh pr checks 7 -R org/claw"));
+        assert!(offers[2]
+            .prompt
+            .contains("gh issue view 254 -R org/claw --comments): Provider test pane."));
+        // Short enough for a host to paste, and one line each.
+        assert!(offers
+            .iter()
+            .all(|o| o.prompt.len() < 600 && !o.prompt.contains('\n')));
+        // A session on no branch is offered nothing but can still be attached.
+        let old = found
+            .iter()
+            .find(|row| row.text().starts_with("old"))
+            .unwrap();
+        assert!(matches!(&old.act, Some(Act::Attach { offers, .. }) if offers.is_empty()));
+
+        // An issue in flight goes to the session at work on it, not to a second start.
+        let listed = rows(
+            View::Issues,
+            &snap,
+            &Ui {
+                filter: "provider".into(),
+                ..Ui::default()
+            },
+            None,
+        );
+        let row = listed
+            .iter()
+            .find(|row| row.text().contains("#254"))
+            .unwrap();
+        assert!(matches!(&row.act, Some(Act::Attach { name, .. }) if name == "claw-254"));
     }
 }

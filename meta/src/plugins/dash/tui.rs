@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use super::host::{self, Host};
 use super::start::{self, Started, Wanted};
-use super::view::{self, Act, Kind, Row, Span, Tone, Ui, View};
+use super::view::{self, Act, Kind, Offer, Row, Span, Tone, Ui, View};
 use super::workspaces::{self, Workspace};
 use super::{gather, Options, Snapshot};
 
@@ -30,7 +30,7 @@ use super::{gather, Options, Snapshot};
 const STALE: Duration = Duration::from_secs(120);
 const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const KEYS: &str =
-    "1-7 view · j/k move · enter open, attach or start · / filter · r read again · ? help · q quit";
+    "1-7 view · j/k move · enter open, attach or start · p send a prompt · / filter · r read again · ? help · q quit";
 
 /// What the interface asks of the reader thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +47,12 @@ pub enum Ask {
         name: String,
         cwd: String,
         pane: Option<u64>,
+    },
+    /// Paste a prompt into the pane a session is in, and submit it.
+    Send {
+        name: String,
+        pane: u64,
+        text: String,
     },
 }
 
@@ -66,12 +72,34 @@ pub enum Tell {
         config: PathBuf,
         result: Result<Started, String>,
     },
+    /// A prompt was pasted into a session's pane, or why it was not.
+    Sent {
+        name: String,
+        pane: u64,
+        result: Result<(), String>,
+    },
     /// A session was brought to the front, in `pane` where the host has panes.
     Attached {
         id: String,
         pane: Option<u64>,
         said: String,
     },
+}
+
+/// What can be sent to one session: a prompt typed now, or one on offer.
+struct Menu {
+    name: String,
+    pane: u64,
+    offers: Vec<Offer>,
+    /// The choice under the cursor; 0 is typing one.
+    at: usize,
+}
+
+/// A prompt being typed for the session in `pane`.
+struct Writing {
+    name: String,
+    pane: u64,
+    text: String,
 }
 
 pub struct App {
@@ -95,6 +123,10 @@ pub struct App {
     armed: Option<String>,
     /// What the last action came to, shown until the next one.
     said: String,
+    /// The list of prompts to send a session, while it is open.
+    menu: Option<Menu>,
+    /// A prompt being typed for a session.
+    writing: Option<Writing>,
     typing: bool,
     help: bool,
     pub quit: bool,
@@ -134,6 +166,8 @@ impl App {
             panes: HashMap::new(),
             armed: None,
             said: String::new(),
+            menu: None,
+            writing: None,
             typing: false,
             help: false,
             quit: false,
@@ -252,7 +286,7 @@ impl App {
                     quick: true,
                 }]
             }
-            Some(Act::Attach { id, name, cwd }) => {
+            Some(Act::Attach { id, name, cwd, .. }) => {
                 let pane = self
                     .panes
                     .get(&id)
@@ -292,6 +326,114 @@ impl App {
         }
     }
 
+    /// Open the list of prompts for the selected row's session. A prompt can
+    /// only be pasted into a pane this dashboard opened: the host refuses
+    /// any other, so a session must be attached from here first.
+    fn offer_to_send(&mut self) {
+        let Some(Act::Attach {
+            id, name, offers, ..
+        }) = self.selected().and_then(|row| row.act.clone())
+        else {
+            self.said = "p sends a prompt to a session: select one, or a branch or issue with one"
+                .to_string();
+            return;
+        };
+        if self.host != Host::GlxyTerm {
+            self.said = "sending a prompt needs Galaxy Terminal with its control socket on ([control] enable)".to_string();
+            return;
+        }
+        let Some(pane) = self
+            .panes
+            .get(&id)
+            .or_else(|| self.panes.get(&name))
+            .copied()
+        else {
+            self.said = format!(
+                "{name} is not in a pane this dashboard opened: enter attaches it, then p sends"
+            );
+            return;
+        };
+        self.said.clear();
+        self.menu = Some(Menu {
+            name,
+            pane,
+            offers,
+            at: 0,
+        });
+    }
+
+    /// Keys while the list of prompts is open.
+    fn on_menu_key(&mut self, key: KeyEvent) -> Vec<Ask> {
+        let Some(menu) = self.menu.as_mut() else {
+            return Vec::new();
+        };
+        let last = menu.offers.len();
+        let chosen = match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                menu.at = (menu.at + 1).min(last);
+                return Vec::new();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                menu.at = menu.at.saturating_sub(1);
+                return Vec::new();
+            }
+            KeyCode::Enter | KeyCode::Char(' ') => menu.at,
+            KeyCode::Char(digit @ '1'..='9') if (digit as usize - '1' as usize) <= last => {
+                digit as usize - '1' as usize
+            }
+            _ => {
+                self.menu = None;
+                return Vec::new();
+            }
+        };
+        let Some(menu) = self.menu.take() else {
+            return Vec::new();
+        };
+        if chosen == 0 {
+            self.writing = Some(Writing {
+                name: menu.name,
+                pane: menu.pane,
+                text: String::new(),
+            });
+            return Vec::new();
+        }
+        self.said = format!("sending to {}…", menu.name);
+        vec![Ask::Send {
+            name: menu.name,
+            pane: menu.pane,
+            text: menu.offers[chosen - 1].prompt.clone(),
+        }]
+    }
+
+    /// Keys while a prompt is being typed.
+    fn on_writing_key(&mut self, key: KeyEvent) -> Vec<Ask> {
+        let Some(writing) = self.writing.as_mut() else {
+            return Vec::new();
+        };
+        match key.code {
+            KeyCode::Esc => self.writing = None,
+            KeyCode::Backspace => {
+                writing.text.pop();
+            }
+            KeyCode::Char(letter) if writing.text.len() < host::MAX_SEND - 4 => {
+                writing.text.push(letter)
+            }
+            KeyCode::Enter if !writing.text.trim().is_empty() => {
+                let Some(done) = self.writing.take() else {
+                    return Vec::new();
+                };
+                self.said = format!("sending to {}…", done.name);
+                return vec![Ask::Send {
+                    name: done.name,
+                    pane: done.pane,
+                    text: done.text,
+                }];
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Ask> {
         if key.kind == KeyEventKind::Release {
             return Vec::new();
@@ -303,6 +445,12 @@ impl App {
         if self.help {
             self.help = false;
             return Vec::new();
+        }
+        if self.menu.is_some() {
+            return self.on_menu_key(key);
+        }
+        if self.writing.is_some() {
+            return self.on_writing_key(key);
         }
         if self.typing {
             match key.code {
@@ -344,6 +492,7 @@ impl App {
                 self.refresh();
             }
             KeyCode::Char('r') => return self.read_again(),
+            KeyCode::Char('p') => self.offer_to_send(),
             KeyCode::Char(way @ ('[' | ']')) => {
                 let at = Span::ALL
                     .iter()
@@ -368,6 +517,7 @@ impl App {
             MouseEventKind::ScrollUp => self.step(-3),
             MouseEventKind::Down(MouseButton::Left) => {
                 self.help = false;
+                self.menu = None;
                 if mouse.row == 0 {
                     let hit = self
                         .tabs
@@ -410,6 +560,19 @@ impl App {
                 self.found.get_or_insert_with(Vec::new);
                 self.ui.looking = false;
                 self.refresh();
+                Vec::new()
+            }
+            Tell::Sent { name, pane, result } => {
+                self.said = match result {
+                    Ok(()) => format!("sent to {name}"),
+                    Err(why) => {
+                        // A pane the host no longer has is forgotten: enter opens a new one.
+                        if why.contains("was not opened") || why.contains("already closed") {
+                            self.panes.retain(|_, known| *known != pane);
+                        }
+                        format!("could not send to {name}: {why}")
+                    }
+                };
                 Vec::new()
             }
             Tell::Attached { id, pane, said } => {
@@ -591,7 +754,25 @@ impl App {
             frame.render_widget(Paragraph::new(lines).block(block), under);
         }
 
-        let foot = if self.typing {
+        let foot = if let Some(writing) = &self.writing {
+            // The end of a long prompt is what is being typed: show that.
+            let room = (footer.width as usize).saturating_sub(writing.name.chars().count() + 36);
+            let typed: Vec<char> = writing.text.chars().collect();
+            let shown: String = typed[typed.len().saturating_sub(room.max(8))..]
+                .iter()
+                .collect();
+            Line::from(vec![
+                Text::styled(
+                    format!(" to {}: {shown}", writing.name),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Text::styled("█", Style::default().fg(Color::Cyan)),
+                Text::styled(
+                    "  enter sends it · esc cancels",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ])
+        } else if self.typing {
             Line::from(vec![
                 Text::styled(
                     format!(" /{}", self.ui.filter),
@@ -626,10 +807,64 @@ impl App {
         };
         frame.render_widget(Paragraph::new(foot), footer);
 
+        if let Some(menu) = &self.menu {
+            draw_menu(frame, menu);
+        }
         if self.help {
             draw_help(frame);
         }
     }
+}
+
+fn draw_menu(frame: &mut Frame, menu: &Menu) {
+    let mut lines = Vec::new();
+    for (n, label) in std::iter::once("Type a prompt…")
+        .chain(menu.offers.iter().map(|offer| offer.label.as_str()))
+        .enumerate()
+    {
+        let style = if n == menu.at {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::styled(
+            format!(
+                "{} {}. {label}",
+                if n == menu.at { "›" } else { " " },
+                n + 1
+            ),
+            style,
+        ));
+    }
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(
+        "  enter sends it · esc closes",
+        Style::default().fg(Color::DarkGray),
+    ));
+    let area = frame.area();
+    let title = format!(" send to {} ", menu.name);
+    let width = (lines
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or(0)
+        .max(title.chars().count()) as u16
+        + 4)
+    .min(area.width);
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let spot = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, spot);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title)),
+        spot,
+    );
 }
 
 fn style_of(tone: Tone) -> Style {
@@ -677,6 +912,7 @@ fn draw_help(frame: &mut Frame) {
         "g/G, page keys   jump",
         "enter, space     open or close a group; switch workspace;",
         "                 attach a session; start work on an issue (asks twice)",
+        "p                send a prompt to the selected session (in a pane opened here)",
         "/                filter the view (esc clears)",
         "[ ]              the period Cost adds up",
         "r                read the workspace again",
@@ -731,8 +967,9 @@ fn reader(asks: mpsc::Receiver<Ask>, tells: mpsc::Sender<Tell>, host: Host, meta
                 };
                 Tell::Started { config, result }
             }
-            // Attaching is the interface's own to do: it may need the terminal.
-            Ask::Attach { .. } => continue,
+            // Attaching and sending are the interface's own to do: one may
+            // need the terminal, the other is a moment's work.
+            Ask::Attach { .. } | Ask::Send { .. } => continue,
         };
         if tells.send(told).is_err() {
             break;
@@ -849,6 +1086,10 @@ pub fn run(config: &RuntimeConfig) -> Result<()> {
                             }
                         };
                         asked.extend(app.on_tell(told));
+                    }
+                    Ask::Send { name, pane, text } => {
+                        let result = host::send(&host::glxy_term, pane, &text);
+                        asked.extend(app.on_tell(Tell::Sent { name, pane, result }));
                     }
                     other => {
                         let _ = ask.send(other);
@@ -1244,5 +1485,138 @@ mod tests {
         assert!(app.on_key(key(KeyCode::Enter)).is_empty());
         assert!(app.on_key(key(KeyCode::Enter)).is_empty());
         assert!(app.armed.is_none());
+    }
+
+    /// An app in Galaxy Terminal with the Sessions view open on claw-254,
+    /// the session whose branch has a failing pull request.
+    fn on_claw_254() -> App {
+        let mut app = app();
+        app.host = Host::GlxyTerm;
+        app.on_key(key(KeyCode::Char('5')));
+        for _ in 0..3 {
+            app.on_key(key(KeyCode::Char('j')));
+        }
+        assert!(
+            app.selected().unwrap().text().starts_with("claw-254"),
+            "{:?}",
+            app.selected()
+        );
+        app
+    }
+
+    #[test]
+    fn a_prompt_goes_only_to_a_pane_opened_here() {
+        let mut app = on_claw_254();
+        // Not attached from here yet: nowhere to paste.
+        assert!(app.on_key(key(KeyCode::Char('p'))).is_empty());
+        assert!(app.menu.is_none());
+        assert!(screen(&mut app, 120, 20)[19]
+            .contains("claw-254 is not in a pane this dashboard opened: enter attaches it"));
+        // Outside Galaxy Terminal there is no pane to paste into at all.
+        app.host = Host::None;
+        app.on_key(key(KeyCode::Char('p')));
+        assert!(screen(&mut app, 120, 20)[19].contains("needs Galaxy Terminal"));
+        // And a row with no session says what p is for.
+        app.host = Host::GlxyTerm;
+        app.on_key(key(KeyCode::Char('2')));
+        app.on_key(key(KeyCode::Char('p')));
+        assert!(screen(&mut app, 120, 20)[19].contains("p sends a prompt to a session"));
+    }
+
+    #[test]
+    fn an_offered_prompt_is_sent_to_the_sessions_pane() {
+        let mut app = on_claw_254();
+        app.on_tell(Tell::Attached {
+            id: "claw-254".into(),
+            pane: Some(12),
+            said: String::new(),
+        });
+        assert!(app.on_key(key(KeyCode::Char('p'))).is_empty());
+        let lines = screen(&mut app, 120, 24);
+        assert!(lines.iter().any(|l| l.contains("send to claw-254")));
+        assert!(lines.iter().any(|l| l.contains("› 1. Type a prompt…")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("2. Fix the failing checks on #7")));
+        app.on_key(key(KeyCode::Char('j')));
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert!(
+            matches!(&asked[..], [Ask::Send { name, pane: 12, text }] if name == "claw-254" && text.contains("gh pr checks 7 -R org/claw")),
+            "{asked:?}"
+        );
+        assert!(app.menu.is_none());
+        app.on_tell(Tell::Sent {
+            name: "claw-254".into(),
+            pane: 12,
+            result: Ok(()),
+        });
+        assert!(screen(&mut app, 120, 20)[19].contains("sent to claw-254"));
+        // A digit picks at once; any other key closes the list and sends nothing.
+        app.on_key(key(KeyCode::Char('p')));
+        assert!(
+            matches!(&app.on_key(key(KeyCode::Char('3')))[..], [Ask::Send { text, .. }] if text.contains("review comments"))
+        );
+        app.on_key(key(KeyCode::Char('p')));
+        assert!(app.on_key(key(KeyCode::Esc)).is_empty());
+        assert!(app.menu.is_none() && !app.quit);
+    }
+
+    #[test]
+    fn a_typed_prompt_is_sent_on_enter_and_dropped_on_escape() {
+        let mut app = on_claw_254();
+        app.on_tell(Tell::Attached {
+            id: "claw-254".into(),
+            pane: Some(12),
+            said: String::new(),
+        });
+        app.on_key(key(KeyCode::Char('p')));
+        app.on_key(key(KeyCode::Enter));
+        // Enter with nothing typed sends nothing; q is a letter here.
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        for letter in "run the tests q".chars() {
+            app.on_key(key(KeyCode::Char(letter)));
+        }
+        app.on_key(key(KeyCode::Backspace));
+        assert!(!app.quit);
+        assert!(screen(&mut app, 120, 20)[19].starts_with(" to claw-254: run the tests █"));
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert_eq!(
+            asked,
+            vec![Ask::Send {
+                name: "claw-254".into(),
+                pane: 12,
+                text: "run the tests ".into()
+            }]
+        );
+        assert!(app.writing.is_none());
+        app.on_key(key(KeyCode::Char('p')));
+        app.on_key(key(KeyCode::Char('1')));
+        app.on_key(key(KeyCode::Char('x')));
+        assert!(app.on_key(key(KeyCode::Esc)).is_empty());
+        assert!(app.writing.is_none());
+    }
+
+    #[test]
+    fn a_pane_the_host_no_longer_has_is_forgotten() {
+        let mut app = on_claw_254();
+        app.on_tell(Tell::Attached {
+            id: "claw-254".into(),
+            pane: Some(12),
+            said: String::new(),
+        });
+        app.on_tell(Tell::Sent {
+            name: "claw-254".into(),
+            pane: 12,
+            result: Err("glxy-term: pane 12 was not opened by open-pane".into()),
+        });
+        assert!(screen(&mut app, 140, 20)[19]
+            .contains("could not send to claw-254: glxy-term: pane 12 was not opened"));
+        // The next p says to attach again, and the next enter opens a new pane.
+        app.on_key(key(KeyCode::Char('p')));
+        assert!(app.menu.is_none());
+        assert!(matches!(
+            &app.on_key(key(KeyCode::Enter))[..],
+            [Ask::Attach { pane: None, .. }]
+        ));
     }
 }
