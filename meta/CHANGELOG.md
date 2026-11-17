@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- *(dash)* `meta dash` reads the whole workspace once and reports it: each project's tier (the `active`, `maintained` and `dormant` labels) and git state, the branches in flight with their pull requests and checks, open issues, and the Claude Code sessions running in it. `--json` prints everything; without it, a summary by tier. `--retier` rewrites tier labels that are due a move (work in flight makes a project active; 90 and 180 days without a commit move it down), `--no-github` and `--no-sessions` skip the `gh` and `claude` CLIs. This is the data half of the workspace dashboard; cost is not read yet (#210)
+
 ## [0.85.0] - 2026-11-12
 
 ### Added

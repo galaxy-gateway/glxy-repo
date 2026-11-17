@@ -1,0 +1,212 @@
+// End-to-end tests for `meta dash`: the real binary against a temp workspace
+// of local git repos. GitHub and the session list are switched off, so no
+// network and no other CLI is needed.
+
+use serde_json::Value;
+use std::fs;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use tempfile::TempDir;
+
+const META_BIN: &str = env!("CARGO_BIN_EXE_meta");
+
+fn git_available() -> bool {
+    Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Run git in `dir`, committing as of `days_ago` days back.
+fn run_git(dir: &Path, days_ago: u64, args: &[&str]) {
+    let when = format!(
+        "{} +0000",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - days_ago * 86_400
+    );
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "commit.gpgsign=false"])
+        .args(["-c", "user.name=Test"])
+        .args(["-c", "user.email=test@example.com"])
+        .args(args)
+        .env("GIT_AUTHOR_DATE", &when)
+        .env("GIT_COMMITTER_DATE", &when)
+        .status()
+        .unwrap_or_else(|e| panic!("git {args:?} failed to spawn: {e}"));
+    assert!(status.success(), "git {args:?} failed");
+}
+
+fn init_repo(dir: &Path, days_ago: u64) {
+    fs::create_dir_all(dir).unwrap();
+    run_git(dir, days_ago, &["init", "-q", "-b", "main"]);
+    run_git(
+        dir,
+        days_ago,
+        &["commit", "-q", "--allow-empty", "-m", "init"],
+    );
+}
+
+fn dash(dir: &Path, args: &[&str]) -> String {
+    let out = Command::new(META_BIN)
+        .current_dir(dir)
+        .arg("dash")
+        .args(args)
+        .args(["--no-github", "--no-sessions"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("meta runs");
+    assert!(
+        out.status.success(),
+        "meta dash {args:?} failed\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// A workspace of three projects: `app` (active, a branch in flight), `old`
+/// (active, last commit 200 days ago) and `lib` (no tier).
+fn workspace() -> TempDir {
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    init_repo(&root.join("app"), 0);
+    run_git(
+        &root.join("app"),
+        0,
+        &["checkout", "-q", "-b", "feat/7-thing"],
+    );
+    run_git(
+        &root.join("app"),
+        0,
+        &["commit", "-q", "--allow-empty", "-m", "work"],
+    );
+    run_git(&root.join("app"), 0, &["checkout", "-q", "main"]);
+    init_repo(&root.join("old"), 200);
+    init_repo(&root.join("lib"), 0);
+    fs::write(
+        root.join(".meta"),
+        r#"{
+  "projects": {
+    "app": { "url": "git@github.com:example/app.git", "labels": ["active", "rust"] },
+    "old": { "url": "git@github.com:example/old.git", "labels": ["active"] },
+    "lib": "git@gitlab.com:example/lib.git"
+  }
+}
+"#,
+    )
+    .unwrap();
+    tmp
+}
+
+fn project<'a>(snapshot: &'a Value, name: &str) -> &'a Value {
+    snapshot["projects"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == name)
+        .unwrap_or_else(|| panic!("no project {name} in {snapshot}"))
+}
+
+#[test]
+fn json_reports_tiers_work_and_the_board() {
+    if !git_available() {
+        return;
+    }
+    let tmp = workspace();
+    let snapshot: Value = serde_json::from_str(&dash(tmp.path(), &["--json"])).unwrap();
+    assert_eq!(snapshot["schema"], 1);
+    assert_eq!(snapshot["has_tiers"], true);
+    assert_eq!(snapshot["projects"].as_array().unwrap().len(), 3);
+    assert_eq!(snapshot["github"]["asked"], false);
+
+    // A branch committed to lately is work in flight: app stays active.
+    let app = project(&snapshot, "app");
+    assert_eq!(app["state"], "ok");
+    assert_eq!(app["tier"], "active");
+    assert_eq!(app["tier_due"], "active");
+    assert_eq!(app["branch"], "main");
+    assert_eq!(app["quiet_days"], 0);
+    assert!(app["work"].as_u64().unwrap() >= 1);
+    // The slug comes from the config where the clone has no origin.
+    assert_eq!(app["slug"], "example/app");
+
+    // 200 quiet days and nothing in flight: due dormant, reported, not applied.
+    let old = project(&snapshot, "old");
+    assert_eq!(old["tier"], "active");
+    assert_eq!(old["tier_due"], "dormant");
+    assert_eq!(old["work"], 0);
+    assert!(old["quiet_days"].as_u64().unwrap() >= 199);
+    let moves = snapshot["retier"].as_array().unwrap();
+    assert_eq!(moves.len(), 1);
+    assert_eq!(moves[0]["project"], "old");
+    assert_eq!(moves[0]["from"], "active");
+    assert_eq!(moves[0]["to"], "dormant");
+    assert_eq!(moves[0]["applied"], false);
+
+    // A project with no tier label has none and is due none.
+    let lib = project(&snapshot, "lib");
+    assert!(lib["tier"].is_null() && lib["tier_due"].is_null());
+    assert!(lib["slug"].is_null());
+
+    let branch = snapshot["board"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["project"] == "app" && i["branch"] == "feat/7-thing")
+        .expect("the unpushed branch is on the board");
+    assert!(branch["unpushed"].as_u64().unwrap() >= 1);
+    assert_eq!(branch["has_upstream"], false);
+    assert_eq!(branch["path"], "");
+    assert_eq!(branch["section"], "local");
+    assert!(branch["pr"].is_null());
+}
+
+#[test]
+fn retier_rewrites_only_the_tier_label() {
+    if !git_available() {
+        return;
+    }
+    let tmp = workspace();
+    let snapshot: Value = serde_json::from_str(&dash(tmp.path(), &["--json", "--retier"])).unwrap();
+    assert_eq!(snapshot["retier"][0]["applied"], true);
+    assert_eq!(project(&snapshot, "old")["tier"], "dormant");
+
+    let config: Value =
+        serde_json::from_str(&fs::read_to_string(tmp.path().join(".meta")).unwrap()).unwrap();
+    assert_eq!(
+        config["projects"]["old"]["labels"],
+        serde_json::json!(["dormant"])
+    );
+    // Other labels and other projects are left as they were.
+    assert_eq!(
+        config["projects"]["app"]["labels"],
+        serde_json::json!(["active", "rust"])
+    );
+    assert_eq!(config["projects"]["lib"], "git@gitlab.com:example/lib.git");
+
+    // Nothing is left to move on the next read.
+    let again: Value = serde_json::from_str(&dash(tmp.path(), &["--json"])).unwrap();
+    assert!(again["retier"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn summary_groups_projects_by_tier() {
+    if !git_available() {
+        return;
+    }
+    let tmp = workspace();
+    let text = dash(tmp.path(), &[]);
+    let at = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("no {needle:?} in:\n{text}"))
+    };
+    assert!(at("Active (2)") < at("No tier (1)"));
+    assert!(text.contains("Tier due  old active to dormant"), "{text}");
+    assert!(text.contains("apply with --retier"), "{text}");
+}

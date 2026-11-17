@@ -60,7 +60,9 @@ fn apply_help_overrides(cmd: Command, prefix: &str, map: &HashMap<String, String
 const HELP_GROUPS: [(&str, &[&str]); 3] = [
     (
         "Core",
-        &["init", "repo", "git", "exec", "run", "status", "help"],
+        &[
+            "init", "repo", "git", "exec", "run", "status", "dash", "help",
+        ],
     ),
     ("Workspace", &["workspace", "worktree", "config"]),
     ("Agents and extensions", &["skill", "module", "plugin"]),

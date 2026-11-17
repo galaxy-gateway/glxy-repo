@@ -2,6 +2,7 @@
 // These are compiled directly into the binary rather than as separate crates
 
 pub mod config;
+pub mod dash;
 pub mod exec;
 pub mod git;
 pub mod init;
@@ -19,6 +20,7 @@ pub mod worktree;
 
 // Re-export plugin structs for convenience
 pub use config::ConfigPlugin;
+pub use dash::DashPlugin;
 pub use exec::ExecPlugin;
 pub use git::GitPlugin;
 pub use init::InitPlugin;
