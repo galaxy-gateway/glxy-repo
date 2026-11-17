@@ -1,5 +1,7 @@
 //! The interactive `meta dash`: seven views over one snapshot, read again in
-//! the background so the keys never wait on git or GitHub. Read-only.
+//! the background so the keys never wait on git or GitHub. It reads, with two
+//! exceptions a person asks for: attaching a Claude session, and starting work
+//! on an issue (a branch, a worktree and a session).
 
 use anyhow::{anyhow, Result};
 use crossterm::event::{
@@ -18,6 +20,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use super::host::{self, Host};
+use super::start::{self, Started, Wanted};
 use super::view::{self, Act, Kind, Row, Span, Tone, Ui, View};
 use super::workspaces::{self, Workspace};
 use super::{gather, Options, Snapshot};
@@ -26,7 +30,7 @@ use super::{gather, Options, Snapshot};
 const STALE: Duration = Duration::from_secs(120);
 const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const KEYS: &str =
-    "1-7 view · j/k move · enter open · / filter · [ ] period · r read again · ? help · q quit";
+    "1-7 view · j/k move · enter open, attach or start · / filter · r read again · ? help · q quit";
 
 /// What the interface asks of the reader thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +38,16 @@ pub enum Ask {
     /// Read the workspace with this config file. A quick read is git and
     /// sessions alone, to have something to show while GitHub is asked.
     Read { config: PathBuf, quick: bool },
+    /// Create a worktree for an issue and start a session on it.
+    Start { config: PathBuf, issue: Wanted },
+    /// Bring a session to the front: in the pane it already has (`pane`), a
+    /// new pane, or this terminal where there is no host to ask.
+    Attach {
+        id: String,
+        name: String,
+        cwd: String,
+        pane: Option<u64>,
+    },
 }
 
 /// What comes back.
@@ -48,6 +62,16 @@ pub enum Tell {
     Found(Workspace),
     /// The whole home folder has been looked through.
     FoundAll,
+    Started {
+        config: PathBuf,
+        result: Result<Started, String>,
+    },
+    /// A session was brought to the front, in `pane` where the host has panes.
+    Attached {
+        id: String,
+        pane: Option<u64>,
+        said: String,
+    },
 }
 
 pub struct App {
@@ -63,6 +87,14 @@ pub struct App {
     reading: bool,
     read_at: Option<Instant>,
     status: String,
+    /// Where this runs: whether sessions can be opened in panes beside it.
+    pub host: Host,
+    /// The pane each session was last opened in, by session id and by name.
+    panes: HashMap<String, u64>,
+    /// The issue a first Enter armed: a second starts work on it.
+    armed: Option<String>,
+    /// What the last action came to, shown until the next one.
+    said: String,
     typing: bool,
     help: bool,
     pub quit: bool,
@@ -98,6 +130,10 @@ impl App {
             reading: true,
             read_at: None,
             status: String::new(),
+            host: Host::None,
+            panes: HashMap::new(),
+            armed: None,
+            said: String::new(),
             typing: false,
             help: false,
             quit: false,
@@ -216,6 +252,42 @@ impl App {
                     quick: true,
                 }]
             }
+            Some(Act::Attach { id, name, cwd }) => {
+                let pane = self
+                    .panes
+                    .get(&id)
+                    .or_else(|| self.panes.get(&name))
+                    .copied();
+                self.said = format!("attaching {name}…");
+                vec![Ask::Attach {
+                    id,
+                    name,
+                    cwd,
+                    pane,
+                }]
+            }
+            Some(Act::Start(issue)) => {
+                let name = issue.name();
+                // Starting makes a branch and runs a session: asked for twice.
+                if self.armed.as_deref() != Some(name.as_str()) {
+                    let place = match self.host {
+                        Host::GlxyTerm => "in a pane beside this one",
+                        Host::None => "in the background",
+                    };
+                    self.said = format!(
+                        "enter again starts {name}: a worktree on {}, and a Claude session {place}",
+                        start::branch_for(&issue)
+                    );
+                    self.armed = Some(name);
+                    return Vec::new();
+                }
+                self.armed = None;
+                self.said = format!("creating a worktree on {}…", start::branch_for(&issue));
+                vec![Ask::Start {
+                    config: self.config.clone(),
+                    issue,
+                }]
+            }
             None => Vec::new(),
         }
     }
@@ -248,6 +320,10 @@ impl App {
             self.refresh();
             return Vec::new();
         }
+        // Only a second Enter confirms: any other key takes the question back.
+        if !matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) && self.armed.take().is_some() {
+            self.said.clear();
+        }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('?') => self.help = true,
@@ -264,6 +340,7 @@ impl App {
             KeyCode::Char('/') => self.typing = true,
             KeyCode::Esc => {
                 self.ui.filter.clear();
+                self.said.clear();
                 self.refresh();
             }
             KeyCode::Char('r') => return self.read_again(),
@@ -333,6 +410,29 @@ impl App {
                 self.found.get_or_insert_with(Vec::new);
                 self.ui.looking = false;
                 self.refresh();
+                Vec::new()
+            }
+            Tell::Attached { id, pane, said } => {
+                if let Some(pane) = pane {
+                    self.panes.insert(id, pane);
+                }
+                self.said = said;
+                Vec::new()
+            }
+            Tell::Started { config, result } => {
+                match result {
+                    Ok(started) => {
+                        if let Some(pane) = started.pane {
+                            self.panes.insert(started.name, pane);
+                        }
+                        self.said = started.said;
+                    }
+                    Err(why) => self.said = why,
+                }
+                // The board has a new branch, or half of one: read it.
+                if config == self.config {
+                    return self.read_again();
+                }
                 Vec::new()
             }
             // An answer for a workspace no longer shown.
@@ -514,6 +614,8 @@ impl App {
                     Style::default().fg(Color::DarkGray),
                 ),
             ])
+        } else if !self.said.is_empty() {
+            Line::styled(format!(" {}", self.said), Style::default().fg(Color::Cyan))
         } else if !self.status.is_empty() && self.snapshot.is_some() {
             Line::styled(
                 format!(" {}", self.status),
@@ -573,14 +675,16 @@ fn draw_help(frame: &mut Frame) {
         "1-7, tab, h/l    change view",
         "j/k, arrows      move",
         "g/G, page keys   jump",
-        "enter, space     open or close a group; switch workspace",
+        "enter, space     open or close a group; switch workspace;",
+        "                 attach a session; start work on an issue (asks twice)",
         "/                filter the view (esc clears)",
         "[ ]              the period Cost adds up",
         "r                read the workspace again",
         "q                quit",
         "",
         "Click a tab or a row; click a heading to open it; the wheel scrolls.",
-        "Read-only: nothing here changes a repository.",
+        "Starting work on an issue makes a branch and a worktree, and runs Claude there.",
+        "Nothing else here changes a repository.",
     ];
     let area = frame.area();
     let width = 72.min(area.width.saturating_sub(2));
@@ -600,29 +704,97 @@ fn draw_help(frame: &mut Frame) {
 }
 
 /// Reads workspaces as asked, one at a time, for as long as someone listens.
-fn reader(asks: mpsc::Receiver<Ask>, tells: mpsc::Sender<Tell>) {
+fn reader(asks: mpsc::Receiver<Ask>, tells: mpsc::Sender<Tell>, host: Host, meta: PathBuf) {
     for ask in asks {
-        let Ask::Read { config, quick } = ask;
-        let options = Options {
-            github: !quick,
-            sessions: true,
-            retier: false,
-            cost: !quick,
+        let told = match ask {
+            Ask::Read { config, quick } => {
+                let options = Options {
+                    github: !quick,
+                    sessions: true,
+                    retier: false,
+                    cost: !quick,
+                };
+                let result = workspaces::config_at(&config)
+                    .and_then(|runtime| gather(&runtime, options))
+                    .map(Box::new)
+                    .map_err(|error| error.to_string());
+                Tell::Read {
+                    config,
+                    quick,
+                    result,
+                }
+            }
+            Ask::Start { config, issue } => {
+                let result = match config.parent() {
+                    Some(root) => start::start(&meta, root, host, &issue),
+                    None => Err("the workspace has no folder".to_string()),
+                };
+                Tell::Started { config, result }
+            }
+            // Attaching is the interface's own to do: it may need the terminal.
+            Ask::Attach { .. } => continue,
         };
-        let result = workspaces::config_at(&config)
-            .and_then(|runtime| gather(&runtime, options))
-            .map(Box::new)
-            .map_err(|error| error.to_string());
-        if tells
-            .send(Tell::Read {
-                config,
-                quick,
-                result,
-            })
-            .is_err()
-        {
+        if tells.send(told).is_err() {
             break;
         }
+    }
+}
+
+/// Bring a session to the front where the host has panes: the pane it was
+/// last opened in if that is still there, else a new one beside this.
+fn attach_in_pane(root: &Path, id: String, name: &str, cwd: &str, pane: Option<u64>) -> Tell {
+    if let Some(pane) = pane.filter(|pane| host::focus(&host::glxy_term, *pane)) {
+        return Tell::Attached {
+            id,
+            pane: Some(pane),
+            said: format!("{name} is in its pane"),
+        };
+    }
+    let folder = Some(Path::new(cwd))
+        .filter(|folder| folder.is_dir())
+        .unwrap_or(root);
+    let argv = ["claude", "attach", &id].map(String::from);
+    match host::open_pane(&host::glxy_term, folder, name, &argv) {
+        Ok(pane) => Tell::Attached {
+            id,
+            pane: Some(pane),
+            said: format!("attached {name} beside this pane"),
+        },
+        Err(why) => Tell::Attached {
+            id,
+            pane: None,
+            said: format!("could not attach {name}: {why}"),
+        },
+    }
+}
+
+/// With no host to open a pane: hand this terminal to `claude attach`, and
+/// take it back when the person detaches.
+fn attach_here(id: String, name: &str) -> Tell {
+    let mut out = std::io::stdout();
+    let _ = crossterm::terminal::disable_raw_mode();
+    let _ = crossterm::execute!(
+        out,
+        DisableMouseCapture,
+        crossterm::terminal::LeaveAlternateScreen,
+        crossterm::cursor::Show
+    );
+    let ran = std::process::Command::new("claude")
+        .args(["attach", &id])
+        .status();
+    let _ = crossterm::terminal::enable_raw_mode();
+    let _ = crossterm::execute!(
+        out,
+        crossterm::terminal::EnterAlternateScreen,
+        EnableMouseCapture
+    );
+    Tell::Attached {
+        id,
+        pane: None,
+        said: match ran {
+            Ok(_) => format!("back from {name}"),
+            Err(why) => format!("could not run claude attach: {why}"),
+        },
     }
 }
 
@@ -637,7 +809,9 @@ pub fn run(config: &RuntimeConfig) -> Result<()> {
     let (tell, tells) = mpsc::channel();
     // Detached, not joined: quitting must not wait for a read under way.
     let found = tell.clone();
-    std::thread::spawn(move || reader(asks, tell));
+    let host = Host::detect();
+    let meta = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("meta"));
+    std::thread::spawn(move || reader(asks, tell, host, meta));
     std::thread::spawn(move || {
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
         if let Some(home) = home {
@@ -648,25 +822,47 @@ pub fn run(config: &RuntimeConfig) -> Result<()> {
         let _ = found.send(Tell::FoundAll);
     });
 
+    let root = path.parent().map(Path::to_path_buf).unwrap_or_default();
     let (mut app, first) = App::new(path);
-    let send = |list: Vec<Ask>| {
-        for one in list {
-            let _ = ask.send(one);
-        }
-    };
-    send(first);
+    app.host = host;
     let mut terminal = init_terminal()?;
     let _ = crossterm::execute!(std::io::stdout(), EnableMouseCapture);
     let result = (|| -> Result<()> {
+        let mut asked = first;
         while !app.quit {
-            while let Ok(told) = tells.try_recv() {
-                send(app.on_tell(told));
+            // What the interface asked for: reads and starts go to the reader,
+            // attaching is done here, and may ask for more.
+            while let Some(one) = asked.pop() {
+                match one {
+                    Ask::Attach {
+                        id,
+                        name,
+                        cwd,
+                        pane,
+                    } => {
+                        let told = match host {
+                            Host::GlxyTerm => attach_in_pane(&root, id, &name, &cwd, pane),
+                            Host::None => {
+                                let told = attach_here(id, &name);
+                                terminal.clear()?;
+                                told
+                            }
+                        };
+                        asked.extend(app.on_tell(told));
+                    }
+                    other => {
+                        let _ = ask.send(other);
+                    }
+                }
             }
-            send(app.tick());
+            while let Ok(told) = tells.try_recv() {
+                asked.extend(app.on_tell(told));
+            }
+            asked.extend(app.tick());
             terminal.draw(|frame| app.draw(frame))?;
             match poll_event()? {
-                Some(Event::Key(key)) => send(app.on_key(key)),
-                Some(Event::Mouse(mouse)) => send(app.on_mouse(mouse)),
+                Some(Event::Key(key)) => asked.extend(app.on_key(key)),
+                Some(Event::Mouse(mouse)) => asked.extend(app.on_mouse(mouse)),
                 _ => {}
             }
         }
@@ -949,5 +1145,104 @@ mod tests {
         // While that read is under way neither the clock nor r asks again.
         assert!(app.tick().is_empty());
         assert!(app.on_key(key(KeyCode::Char('r'))).is_empty());
+    }
+
+    #[test]
+    fn enter_on_a_session_asks_to_attach_and_remembers_its_pane() {
+        let mut app = app();
+        app.host = Host::GlxyTerm;
+        app.on_key(key(KeyCode::Char('5')));
+        // Waiting on you comes first: its heading, then earth-3.
+        app.on_key(key(KeyCode::Char('j')));
+        assert!(app.selected().unwrap().text().starts_with("earth-3"));
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert_eq!(
+            asked,
+            vec![Ask::Attach {
+                id: "earth-3".into(),
+                name: "earth-3".into(),
+                cwd: "/ws/earth".into(),
+                pane: None,
+            }]
+        );
+        app.on_tell(Tell::Attached {
+            id: "earth-3".into(),
+            pane: Some(12),
+            said: "attached earth-3 beside this pane".into(),
+        });
+        assert!(screen(&mut app, 120, 20)[19].contains("attached earth-3 beside this pane"));
+        // The next Enter names the pane it has, to focus it and not open a second.
+        let again = app.on_key(key(KeyCode::Enter));
+        assert!(matches!(&again[0], Ask::Attach { pane: Some(12), .. }));
+    }
+
+    #[test]
+    fn starting_on_an_issue_asks_twice_then_reads_the_board_again() {
+        let mut app = app();
+        app.host = Host::GlxyTerm;
+        app.on_key(key(KeyCode::Char('4')));
+        app.on_key(key(KeyCode::Char('j')));
+        assert!(app
+            .selected()
+            .unwrap()
+            .text()
+            .contains("#7 mind P0 Data loss on save"));
+        // The first Enter only says what a second would do.
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        assert!(screen(&mut app, 140, 20)[19].contains(
+            "enter again starts mind-7: a worktree on feat/7-data-loss-on-save, and a Claude session in a pane beside this one"
+        ));
+        // Moving away takes the question back.
+        app.on_key(key(KeyCode::Char('j')));
+        app.on_key(key(KeyCode::Char('k')));
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert!(
+            matches!(&asked[..], [Ask::Start { config, issue }] if config == Path::new("/ws/.metarepo") && issue.name() == "mind-7")
+        );
+        let more = app.on_tell(Tell::Started {
+            config: "/ws/.metarepo".into(),
+            result: Ok(Started {
+                name: "mind-7".into(),
+                pane: Some(31),
+                said: "started mind-7 beside this pane on feat/7-data-loss-on-save".into(),
+            }),
+        });
+        assert_eq!(
+            more,
+            vec![Ask::Read {
+                config: "/ws/.metarepo".into(),
+                quick: false
+            }]
+        );
+        assert_eq!(app.panes.get("mind-7"), Some(&31));
+        assert!(screen(&mut app, 120, 20)[19].contains("started mind-7 beside this pane"));
+        // A failure is said, and the board is still read again.
+        app.reading = false;
+        let more = app.on_tell(Tell::Started {
+            config: "/ws/.metarepo".into(),
+            result: Err("branch feat/7-data-loss-on-save already exists in mind".into()),
+        });
+        assert_eq!(more.len(), 1);
+        assert!(screen(&mut app, 120, 20)[19].contains("already exists in mind"));
+    }
+
+    #[test]
+    fn an_issue_already_in_flight_is_not_started_again() {
+        let mut snap = snapshot();
+        for issue in &mut snap.issues {
+            issue.in_flight = true;
+        }
+        let (mut app, _) = App::new("/ws/.metarepo".into());
+        app.on_tell(Tell::Read {
+            config: "/ws/.metarepo".into(),
+            quick: false,
+            result: Ok(Box::new(snap)),
+        });
+        app.on_key(key(KeyCode::Char('4')));
+        app.on_key(key(KeyCode::Char('j')));
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        assert!(app.armed.is_none());
     }
 }

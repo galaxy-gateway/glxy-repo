@@ -16,9 +16,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod cost;
 mod github;
+pub mod host;
 mod plugin;
 mod scan;
 mod sessions;
+pub mod start;
 mod tiers;
 mod tui;
 mod view;

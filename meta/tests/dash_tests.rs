@@ -277,3 +277,50 @@ fn cost_is_summed_from_transcripts_by_project() {
     let skipped: Value = serde_json::from_str(&dash(tmp.path(), &["--json", "--no-cost"])).unwrap();
     assert!(skipped["cost"].is_null());
 }
+
+#[test]
+fn starting_work_makes_a_branch_and_worktree_through_meta() {
+    use metarepo::plugins::dash::start::make_worktree;
+    if !git_available() {
+        return;
+    }
+    let tmp = workspace();
+    let root = tmp.path().canonicalize().unwrap();
+    let meta = Path::new(META_BIN);
+
+    let path = make_worktree(meta, &root, "app", "fix/8-new-thing").expect("a worktree is made");
+    assert!(path.is_dir(), "{} is not a folder", path.display());
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&path)
+            .args(args)
+            .output()
+            .unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        )
+    };
+    assert_eq!(
+        git(&["rev-parse", "--abbrev-ref", "HEAD"]),
+        (true, "fix/8-new-thing".to_string())
+    );
+    // The new branch tracks nothing, so a push cannot aim at the base.
+    assert!(!git(&["rev-parse", "-q", "--verify", "@{u}"]).0);
+
+    // The board then shows it, and the issue it is named for counts as in flight.
+    let snapshot: Value = serde_json::from_str(&dash(&root, &["--json"])).unwrap();
+    assert!(snapshot["board"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["project"] == "app" && i["branch"] == "fix/8-new-thing" && i["path"] != ""));
+
+    let again = make_worktree(meta, &root, "app", "fix/8-new-thing").unwrap_err();
+    assert_eq!(again, "branch fix/8-new-thing already exists in app");
+    assert_eq!(
+        make_worktree(meta, &root, "nope", "fix/1-x").unwrap_err(),
+        "no project named nope"
+    );
+}
