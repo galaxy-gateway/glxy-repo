@@ -114,6 +114,47 @@ pub fn focus(run: Runner, pane: u64) -> bool {
         .is_some_and(|said| !said.trim_start().to_lowercase().starts_with("error"))
 }
 
+/// The most text one [`send`] carries, in bytes: glxy-term's own limit.
+pub const MAX_SEND: usize = 3072;
+
+/// Paste `text` into a pane this program opened, leaving focus where it is,
+/// and press Return after it. The host refuses any pane `open_pane` did not
+/// open. Needs a Galaxy Terminal with the `send` verb (0.113.0).
+pub fn send(run: Runner, pane: u64, text: &str) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err("there is nothing to send".to_string());
+    }
+    if text.len() > MAX_SEND {
+        return Err(format!(
+            "that is {} bytes and a pane takes {MAX_SEND} at a time",
+            text.len()
+        ));
+    }
+    // Alone, a dash would mean "read the text from stdin" to glxy-term.
+    if text == "-" {
+        return Err("a lone dash cannot be sent".to_string());
+    }
+    let args = ["ctl", "send", &pane.to_string(), "--submit", text].map(String::from);
+    let said =
+        run(&args).ok_or_else(|| "glxy-term could not be run (is it on PATH?)".to_string())?;
+    let reply = said.trim();
+    if reply.is_empty() || reply == "ok" {
+        return Ok(());
+    }
+    let why = reply
+        .strip_prefix("error: ")
+        .or_else(|| reply.strip_prefix("Error: "))
+        .unwrap_or(reply);
+    Err(
+        if why.starts_with("unknown verb") || why.starts_with("usage:") {
+            "this Galaxy Terminal cannot paste into a pane yet (ctl send needs 0.113.0)".to_string()
+        } else {
+            format!("glxy-term: {why}")
+        },
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +254,55 @@ mod tests {
             7,
         );
         assert_eq!(asked.borrow()[0], words(&["ctl", "focus", "7"]));
+    }
+
+    #[test]
+    fn text_is_sent_to_a_pane_with_return_after_it() {
+        let asked = RefCell::new(Vec::new());
+        let run = |args: &[String]| {
+            asked.borrow_mut().push(args.to_vec());
+            Some(String::new())
+        };
+        assert_eq!(send(&run, 9, "  Fix the checks.\nThen commit.\n"), Ok(()));
+        // Line breaks go as they are: the client escapes them for the socket.
+        assert_eq!(
+            asked.borrow()[0],
+            words(&[
+                "ctl",
+                "send",
+                "9",
+                "--submit",
+                "Fix the checks.\nThen commit."
+            ])
+        );
+    }
+
+    #[test]
+    fn what_cannot_be_sent_is_said_plainly() {
+        let never = |_: &[String]| -> Option<String> { panic!("must not be run") };
+        assert!(send(&never, 9, "  \n").is_err());
+        assert!(send(&never, 9, "-").is_err());
+        assert!(send(&never, 9, &"x".repeat(MAX_SEND + 1))
+            .unwrap_err()
+            .contains("3073 bytes"));
+        let fits = |_: &[String]| Some(String::new());
+        assert!(send(&fits, 9, &"x".repeat(MAX_SEND)).is_ok());
+
+        let gone = |_: &[String]| Some("error: pane 9 was not opened by open-pane\n".to_string());
+        assert_eq!(
+            send(&gone, 9, "hi"),
+            Err("glxy-term: pane 9 was not opened by open-pane".to_string())
+        );
+        // An older Galaxy Terminal does not know the verb, in the app or in its client.
+        for old in [
+            "error: unknown verb (try open-window, open-pane, ...)\n",
+            "Error: usage: glxy-term ctl open-window [...]\n",
+        ] {
+            let old = move |_: &[String]| Some(old.to_string());
+            assert!(send(&old, 9, "hi").unwrap_err().contains("needs 0.113.0"));
+        }
+        assert!(send(&|_: &[String]| None, 9, "hi")
+            .unwrap_err()
+            .contains("PATH"));
     }
 }
