@@ -253,6 +253,7 @@ gh repo list ORG --limit 1000 --json name,url --jq '.[] | "\(.name) \(.url)"' \
 | `meta worktree <add\|list\|remove\|clean\|prune\|repair\|tui>` | worktrees across repos (alias: `wt`) |
 | `meta workspace <init [name]\|list>` | workspaces and nested workspaces (alias: `ws`) |
 | `meta status` | interactive status dashboard |
+| `meta dash` | workspace overview by tier: branches in flight, issues, Claude sessions (`--json` for everything) |
 | `meta config <get\|set\|list\|edit\|migrate>` | read and change configuration |
 | `meta plugin <install\|list\|verify\|update\|remove>` | manage external plugins |
 | `meta skill`, `meta module` | agent skills and plugin-plus-skill bundles (opt-in) |

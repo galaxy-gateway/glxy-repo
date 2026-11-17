@@ -39,6 +39,7 @@ impl PluginRegistry {
         self.register(Box::new(plugins::workspace::WorkspacePlugin::new()));
         self.register(Box::new(plugins::run::RunPlugin::new()));
         self.register(Box::new(plugins::status::StatusPlugin::new()));
+        self.register(Box::new(plugins::dash::DashPlugin::new()));
         self.register(Box::new(plugins::plugin_manager::PluginManagerPlugin::new()));
 
         // No built-in experimental plugins remain: mcp moved to the external
