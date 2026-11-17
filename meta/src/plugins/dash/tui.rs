@@ -24,7 +24,7 @@ use super::host::{self, Host};
 use super::start::{self, Started, Wanted};
 use super::view::{self, Act, Kind, Offer, Row, Span, Tone, Ui, View};
 use super::workspaces::{self, Workspace};
-use super::{gather, Options, Snapshot};
+use super::{gather, retier, Move, Options, Snapshot};
 
 /// How long a snapshot is shown before it is read again unasked.
 const STALE: Duration = Duration::from_secs(120);
@@ -38,6 +38,8 @@ pub enum Ask {
     /// Read the workspace with this config file. A quick read is git and
     /// sessions alone, to have something to show while GitHub is asked.
     Read { config: PathBuf, quick: bool },
+    /// Apply tier moves: the labels, the README's Tier column, one commit.
+    Retier { config: PathBuf, moves: Vec<Move> },
     /// Create a worktree for an issue and start a session on it.
     Start { config: PathBuf, issue: Wanted },
     /// Bring a session to the front: in the pane it already has (`pane`), a
@@ -71,6 +73,11 @@ pub enum Tell {
     Started {
         config: PathBuf,
         result: Result<Started, String>,
+    },
+    /// Tier moves were applied, with what that came to in one line.
+    Retiered {
+        config: PathBuf,
+        result: Result<String, String>,
     },
     /// A prompt was pasted into a session's pane, or why it was not.
     Sent {
@@ -298,6 +305,23 @@ impl App {
                     name,
                     cwd,
                     pane,
+                }]
+            }
+            Some(Act::Retier(moves)) => {
+                // It rewrites the config and commits: asked for twice.
+                if self.armed.as_deref() != Some("@retier") {
+                    self.said = format!(
+                        "enter again moves {}: the labels, the README, one commit (not pushed)",
+                        plural_projects(moves.len())
+                    );
+                    self.armed = Some("@retier".to_string());
+                    return Vec::new();
+                }
+                self.armed = None;
+                self.said = "retiering…".to_string();
+                vec![Ask::Retier {
+                    config: self.config.clone(),
+                    moves,
                 }]
             }
             Some(Act::Start(issue)) => {
@@ -580,6 +604,13 @@ impl App {
                     self.panes.insert(id, pane);
                 }
                 self.said = said;
+                Vec::new()
+            }
+            Tell::Retiered { config, result } => {
+                self.said = result.unwrap_or_else(|why| format!("could not retier: {why}"));
+                if config == self.config {
+                    return self.read_again();
+                }
                 Vec::new()
             }
             Tell::Started { config, result } => {
@@ -867,6 +898,14 @@ fn draw_menu(frame: &mut Frame, menu: &Menu) {
     );
 }
 
+fn plural_projects(n: usize) -> String {
+    if n == 1 {
+        "1 project".to_string()
+    } else {
+        format!("{n} projects")
+    }
+}
+
 fn style_of(tone: Tone) -> Style {
     match tone {
         Tone::Plain => Style::default(),
@@ -949,6 +988,7 @@ fn reader(asks: mpsc::Receiver<Ask>, tells: mpsc::Sender<Tell>, host: Host, meta
                     sessions: true,
                     retier: false,
                     cost: !quick,
+                    commit: false,
                 };
                 let result = workspaces::config_at(&config)
                     .and_then(|runtime| gather(&runtime, options))
@@ -959,6 +999,14 @@ fn reader(asks: mpsc::Receiver<Ask>, tells: mpsc::Sender<Tell>, host: Host, meta
                     quick,
                     result,
                 }
+            }
+            Ask::Retier { config, moves } => {
+                let result = match config.parent() {
+                    Some(root) => retier::retier(root, &config, &moves, true)
+                        .map(|outcome| outcome.said(&moves)),
+                    None => Err("the workspace has no folder".to_string()),
+                };
+                Tell::Retiered { config, result }
             }
             Ask::Start { config, issue } => {
                 let result = match config.parent() {
@@ -1618,5 +1666,45 @@ mod tests {
             &app.on_key(key(KeyCode::Enter))[..],
             [Ask::Attach { pane: None, .. }]
         ));
+    }
+
+    #[test]
+    fn tier_moves_are_applied_on_a_second_enter() {
+        let mut snap = snapshot();
+        snap.projects[1].tier_due = Some(crate::plugins::dash::Tier::Dormant);
+        snap.retier = vec![Move {
+            project: "earth".into(),
+            from: crate::plugins::dash::Tier::Maintained,
+            to: crate::plugins::dash::Tier::Dormant,
+            quiet_days: 200,
+            applied: false,
+        }];
+        let (mut app, _) = App::new("/ws/.metarepo".into());
+        app.on_tell(Tell::Read {
+            config: "/ws/.metarepo".into(),
+            quick: false,
+            result: Ok(Box::new(snap)),
+        });
+        app.on_key(key(KeyCode::Char('2')));
+        // The moves due are the first thing on Projects.
+        assert!(app
+            .selected()
+            .unwrap()
+            .text()
+            .contains("1 project is due a tier move: earth maintained to dormant"));
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        assert!(screen(&mut app, 120, 20)[19].contains(
+            "enter again moves 1 project: the labels, the README, one commit (not pushed)"
+        ));
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert!(
+            matches!(&asked[..], [Ask::Retier { moves, .. }] if moves.len() == 1 && moves[0].project == "earth")
+        );
+        let more = app.on_tell(Tell::Retiered {
+            config: "/ws/.metarepo".into(),
+            result: Ok("retiered earth to dormant · README updated · committed as abc1234".into()),
+        });
+        assert_eq!(more.len(), 1);
+        assert!(screen(&mut app, 120, 20)[19].contains("committed as abc1234"));
     }
 }
