@@ -14,6 +14,7 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod actions;
 mod cost;
 mod drift;
 mod github;
@@ -146,6 +147,24 @@ pub fn section_of(item: &Item, own: &[&Session]) -> Section {
             }
             Some(_) => Section::Ready,
         }
+    }
+}
+
+/// Give each branch on the board its section, by the sessions at work on it.
+/// Run again whenever the sessions are read anew.
+pub fn place_sessions(board: &mut [Item], sessions: &[Session]) {
+    let mut own: HashMap<String, Vec<&Session>> = HashMap::new();
+    for session in sessions {
+        if let Some(item) = sessions::item_of(session, board) {
+            own.entry(item.key()).or_default().push(session);
+        }
+    }
+    let sections: Vec<Section> = board
+        .iter()
+        .map(|item| section_of(item, own.get(&item.key()).map_or(&[], Vec::as_slice)))
+        .collect();
+    for (item, section) in board.iter_mut().zip(sections) {
+        item.section = section;
     }
 }
 
@@ -312,19 +331,7 @@ pub fn gather(config: &RuntimeConfig, options: Options) -> Result<Snapshot> {
 
     board.retain(|item| !item.is_at_rest());
     board.sort_by(|a, b| a.project.cmp(&b.project).then(a.branch.cmp(&b.branch)));
-    let mut own: HashMap<String, Vec<&Session>> = HashMap::new();
-    for session in &sessions {
-        if let Some(item) = sessions::item_of(session, &board) {
-            own.entry(item.key()).or_default().push(session);
-        }
-    }
-    let sections: Vec<Section> = board
-        .iter()
-        .map(|item| section_of(item, own.get(&item.key()).map_or(&[], Vec::as_slice)))
-        .collect();
-    for (item, section) in board.iter_mut().zip(sections) {
-        item.section = section;
-    }
+    place_sessions(&mut board, &sessions);
     github::mark_in_flight(&mut issues, &board);
     let busy: HashSet<&str> = board.iter().map(|item| item.project.as_str()).collect();
     let at_rest = projects

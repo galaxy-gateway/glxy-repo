@@ -114,6 +114,23 @@ pub fn focus(run: Runner, pane: u64) -> bool {
         .is_some_and(|said| !said.trim_start().to_lowercase().starts_with("error"))
 }
 
+/// Tell the person something happened while they may be looking elsewhere:
+/// a toast in Galaxy Terminal, the terminal's bell anywhere else.
+pub fn notify(run: Runner, host: Host, text: &str) {
+    match host {
+        Host::GlxyTerm => {
+            let text: String = text.chars().filter(|c| !c.is_control()).take(120).collect();
+            let _ = run(&["ctl".to_string(), "toast".to_string(), text]);
+        }
+        Host::None => {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(b"\x07");
+            let _ = out.flush();
+        }
+    }
+}
+
 /// The most text one [`send`] carries, in bytes: glxy-term's own limit.
 pub const MAX_SEND: usize = 3072;
 
@@ -304,5 +321,19 @@ mod tests {
         assert!(send(&|_: &[String]| None, 9, "hi")
             .unwrap_err()
             .contains("PATH"));
+    }
+
+    #[test]
+    fn a_notice_is_a_toast_where_the_host_has_them() {
+        let asked = RefCell::new(Vec::new());
+        let run = |args: &[String]| {
+            asked.borrow_mut().push(args.to_vec());
+            Some(String::new())
+        };
+        notify(&run, Host::GlxyTerm, "claw-62 finished\n");
+        assert_eq!(
+            asked.borrow()[0],
+            words(&["ctl", "toast", "claw-62 finished"])
+        );
     }
 }

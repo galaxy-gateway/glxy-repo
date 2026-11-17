@@ -133,6 +133,8 @@ pub struct Row {
     /// Shown under the list while the row is selected.
     pub detail: Vec<String>,
     pub act: Option<Act>,
+    /// The issue the row is about, by project and number.
+    pub issue: Option<(String, u64)>,
 }
 
 impl Row {
@@ -382,6 +384,7 @@ impl<'a> Out<'a> {
             cells,
             detail: Vec::new(),
             act: None,
+            issue: None,
         });
     }
 
@@ -407,6 +410,7 @@ impl<'a> Out<'a> {
             cells,
             detail: Vec::new(),
             act: Some(Act::Fold(key.to_string())),
+            issue: None,
         });
         is_open
     }
@@ -424,6 +428,7 @@ impl<'a> Out<'a> {
             cells,
             detail,
             act,
+            issue: None,
         });
     }
 
@@ -607,6 +612,9 @@ impl<'a> Out<'a> {
             }))
         };
         self.item(indent, cells, detail, act);
+        if let Some(row) = self.rows.last_mut() {
+            row.issue = Some((issue.project.clone(), issue.number));
+        }
     }
 
     fn session(&mut self, indent: u16, session: &Session, tagged: bool) {
@@ -854,6 +862,15 @@ fn project_row(out: &mut Out, project: &Project) {
         project.dirty,
         if project.bare { " · bare clone" } else { "" }
     ));
+    for commit in &project.recent {
+        detail.push(format!("recent  {commit}"));
+    }
+    for change in project.changes.iter().take(3) {
+        detail.push(format!("changed  {change}"));
+    }
+    if project.dirty as usize > 3 {
+        detail.push(format!("… and {} more changed", project.dirty as usize - 3));
+    }
     out.item(1, cells, detail, None);
 }
 
@@ -1463,6 +1480,7 @@ fn cost(out: &mut Out) {
                 ],
                 detail: Vec::new(),
                 act: Some(Act::Fold(key)),
+                issue: None,
             });
             if is_open {
                 let mut parts: Vec<(&String, &(f64, u64))> = sum.parts.iter().collect();
@@ -1584,6 +1602,7 @@ fn workspaces(out: &mut Out, found: Option<&[Workspace]>) {
                 },
             ],
             act: (!is_here).then(|| Act::Switch(workspace.config.clone())),
+            issue: None,
         });
         for (n, tier) in Tier::ALL.into_iter().enumerate() {
             if workspace.tiers[n] == 0 {
@@ -1685,6 +1704,7 @@ pub fn rows(view: View, snapshot: &Snapshot, ui: &Ui, found: Option<&[Workspace]
             cells: vec![(format!("Nothing matches \"{typed}\"."), Tone::Dim)],
             detail: Vec::new(),
             act: None,
+            issue: None,
         }];
     }
     kept
@@ -1732,6 +1752,8 @@ pub(super) mod tests {
             quiet_days: 3,
             work: 0,
             slug: Some(format!("org/{name}")),
+            changes: Vec::new(),
+            recent: Vec::new(),
         }
     }
 
@@ -2216,5 +2238,49 @@ pub(super) mod tests {
         // A workspace in step says nothing above its projects.
         let calm = texts(&rows(View::Projects, &snapshot(), &ui, None));
         assert_eq!(calm[0], "▾ Active  1");
+    }
+
+    #[test]
+    fn a_project_shows_its_recent_commits_and_what_is_changed() {
+        let (mut snap, ui) = (snapshot(), Ui::default());
+        snap.projects[0].recent = vec![
+            "abc1234 feat: a thing".into(),
+            "def5678 fix: another".into(),
+        ];
+        snap.projects[0].changes = vec![
+            " M src/a.rs".into(),
+            "?? notes.md".into(),
+            " M b".into(),
+            " M c".into(),
+        ];
+        snap.projects[0].dirty = 5;
+        let found = rows(View::Projects, &snap, &ui, None);
+        let claw = found
+            .iter()
+            .find(|row| row.text().starts_with("claw"))
+            .unwrap();
+        let tail: Vec<&str> = claw.detail[4..].iter().map(String::as_str).collect();
+        assert_eq!(
+            tail,
+            vec![
+                "recent  abc1234 feat: a thing",
+                "recent  def5678 fix: another",
+                "changed   M src/a.rs",
+                "changed  ?? notes.md",
+                "changed   M b",
+                "… and 2 more changed"
+            ]
+        );
+        // An issue row says which issue it is, in flight or not.
+        let listed = rows(View::Issues, &snap, &ui, None);
+        let urgent = listed
+            .iter()
+            .find(|row| row.text().contains("#7 mind"))
+            .unwrap();
+        assert_eq!(urgent.issue, Some(("mind".to_string(), 7)));
+        assert!(listed
+            .iter()
+            .filter(|row| row.kind == Kind::Heading)
+            .all(|row| row.issue.is_none()));
     }
 }

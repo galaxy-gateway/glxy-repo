@@ -24,13 +24,29 @@ use super::host::{self, Host};
 use super::start::{self, Started, Wanted};
 use super::view::{self, Act, Kind, Offer, Row, Span, Tone, Ui, View};
 use super::workspaces::{self, Workspace};
-use super::{gather, retier, Move, Options, Snapshot};
+use super::{actions, gather, retier, sessions, Move, Options, Session, Snapshot};
 
 /// How long a snapshot is shown before it is read again unasked.
 const STALE: Duration = Duration::from_secs(120);
 const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const KEYS: &str =
-    "1-7 view · j/k move · enter open, attach or start · p send a prompt · / filter · r read again · ? help · q quit";
+    "1-7 view · j/k move · enter open, attach or start · p prompt · o issue · f fetch · / filter · ? help · q quit";
+
+/// The most rows the detail under the list takes.
+const DETAIL_ROWS: usize = 10;
+
+/// How often the sessions alone are asked after, between whole reads.
+const SESSIONS_EVERY: Duration = Duration::from_secs(30);
+
+/// The models a session can be started on; the first is whatever Claude
+/// Code is set to use. A background session takes the full id.
+const MODELS: [(&str, &str); 5] = [
+    ("", "Claude's default model"),
+    ("claude-fable-5-2", "Fable 5.2"),
+    ("claude-opus-5-5", "Opus 5.5"),
+    ("claude-sonnet-5-5", "Sonnet 5.5"),
+    ("claude-haiku-5-5", "Haiku 5.5"),
+];
 
 /// What the interface asks of the reader thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +57,31 @@ pub enum Ask {
     /// Apply tier moves: the labels, the README's Tier column, one commit.
     Retier { config: PathBuf, moves: Vec<Move> },
     /// Create a worktree for an issue and start a session on it.
-    Start { config: PathBuf, issue: Wanted },
+    Start {
+        config: PathBuf,
+        issue: Wanted,
+        /// The model to start it on; `None` for Claude's default.
+        model: Option<String>,
+    },
+    /// Fetch every project from its origin.
+    Fetch { config: PathBuf, keys: Vec<String> },
+    /// Clone what is missing and pull every project (`meta git sync`).
+    Sync { config: PathBuf },
+    /// Read an issue's text from GitHub.
+    Issue {
+        config: PathBuf,
+        project: String,
+        number: u64,
+        title: String,
+    },
+    /// List the Claude sessions again, without reading anything else.
+    Sessions {
+        config: PathBuf,
+        keys: Vec<String>,
+        slugs: HashMap<String, String>,
+    },
+    /// Tell the person something happened: a toast, or the bell.
+    Notify { text: String },
     /// Bring a session to the front: in the pane it already has (`pane`), a
     /// new pane, or this terminal where there is no host to ask.
     Attach {
@@ -74,6 +114,18 @@ pub enum Tell {
         config: PathBuf,
         result: Result<Started, String>,
     },
+    /// A workspace action ended, with what it came to in one line.
+    Did { config: PathBuf, said: String },
+    /// An issue's text, or why it could not be read.
+    Page {
+        title: String,
+        result: Result<Vec<String>, String>,
+    },
+    /// The sessions, listed again; `None` when they could not be.
+    Sessions {
+        config: PathBuf,
+        list: Option<Vec<Session>>,
+    },
     /// Tier moves were applied, with what that came to in one line.
     Retiered {
         config: PathBuf,
@@ -100,6 +152,33 @@ struct Menu {
     offers: Vec<Offer>,
     /// The choice under the cursor; 0 is typing one.
     at: usize,
+}
+
+/// Text to read, scrolled.
+struct Page {
+    title: String,
+    lines: Vec<String>,
+    at: usize,
+}
+
+/// What changed for a person between two lists of sessions: a session that
+/// was at work and now waits on them, or has finished.
+pub fn notices(before: &[Session], now: &[Session]) -> Vec<String> {
+    now.iter()
+        .filter(|session| session.status != "busy")
+        .filter(|session| {
+            before
+                .iter()
+                .any(|was| was.id == session.id && was.status == "busy")
+        })
+        .map(|session| {
+            if session.needs_you {
+                format!("{} is waiting on you", session.name)
+            } else {
+                format!("{} finished", session.name)
+            }
+        })
+        .collect()
 }
 
 /// A prompt being typed for the session in `pane`.
@@ -130,6 +209,12 @@ pub struct App {
     armed: Option<String>,
     /// What the last action came to, shown until the next one.
     said: String,
+    /// An issue's text being read, while it is open.
+    page: Option<Page>,
+    /// Which of [`MODELS`] a started session runs on.
+    model: usize,
+    /// When the sessions were last asked after.
+    sessions_at: Instant,
     /// The list of prompts to send a session, while it is open.
     menu: Option<Menu>,
     /// A prompt being typed for a session.
@@ -173,6 +258,9 @@ impl App {
             panes: HashMap::new(),
             armed: None,
             said: String::new(),
+            page: None,
+            model: 0,
+            sessions_at: Instant::now(),
             menu: None,
             writing: None,
             typing: false,
@@ -333,17 +421,22 @@ impl App {
                         Host::None => "in the background",
                     };
                     self.said = format!(
-                        "enter again starts {name}: a worktree on {}, and a Claude session {place}",
-                        start::branch_for(&issue)
+                        "enter again starts {name}: a worktree on {}, and a Claude session {place}{}",
+                        start::branch_for(&issue),
+                        if self.model == 0 { String::new() } else { format!(" on {} (m changes it)", MODELS[self.model].1) }
                     );
                     self.armed = Some(name);
                     return Vec::new();
                 }
                 self.armed = None;
                 self.said = format!("creating a worktree on {}…", start::branch_for(&issue));
+                let model = Some(MODELS[self.model].0)
+                    .filter(|id| !id.is_empty())
+                    .map(String::from);
                 vec![Ask::Start {
                     config: self.config.clone(),
                     issue,
+                    model,
                 }]
             }
             None => Vec::new(),
@@ -470,6 +563,18 @@ impl App {
             self.help = false;
             return Vec::new();
         }
+        if let Some(page) = self.page.as_mut() {
+            let last = page.lines.len().saturating_sub(1);
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => page.at = (page.at + 1).min(last),
+                KeyCode::Up | KeyCode::Char('k') => page.at = page.at.saturating_sub(1),
+                KeyCode::PageDown | KeyCode::Char(' ') => page.at = (page.at + 10).min(last),
+                KeyCode::PageUp => page.at = page.at.saturating_sub(10),
+                KeyCode::Home | KeyCode::Char('g') => page.at = 0,
+                _ => self.page = None,
+            }
+            return Vec::new();
+        }
         if self.menu.is_some() {
             return self.on_menu_key(key);
         }
@@ -496,6 +601,13 @@ impl App {
         if !matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) && self.armed.take().is_some() {
             self.said.clear();
         }
+        if key.code == KeyCode::Enter && self.armed.as_deref() == Some("@sync") {
+            self.armed = None;
+            self.said = "syncing every project…".to_string();
+            return vec![Ask::Sync {
+                config: self.config.clone(),
+            }];
+        }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('?') => self.help = true,
@@ -517,6 +629,48 @@ impl App {
             }
             KeyCode::Char('r') => return self.read_again(),
             KeyCode::Char('p') => self.offer_to_send(),
+            KeyCode::Char('m') => {
+                self.model = (self.model + 1) % MODELS.len();
+                self.said = format!("sessions started here run on {}", MODELS[self.model].1);
+            }
+            KeyCode::Char('o') => {
+                let Some((project, number)) = self.selected().and_then(|row| row.issue.clone())
+                else {
+                    self.said = "o reads an issue: select one".to_string();
+                    return Vec::new();
+                };
+                let title = self
+                    .snapshot
+                    .iter()
+                    .flat_map(|snapshot| &snapshot.issues)
+                    .find(|issue| issue.project == project && issue.number == number)
+                    .map(|issue| issue.title.clone())
+                    .unwrap_or_default();
+                self.said = format!("reading {project} #{number}…");
+                return vec![Ask::Issue {
+                    config: self.config.clone(),
+                    project,
+                    number,
+                    title,
+                }];
+            }
+            KeyCode::Char('f') => {
+                let Some(snapshot) = &self.snapshot else {
+                    return Vec::new();
+                };
+                self.said = "fetching every project…".to_string();
+                return vec![Ask::Fetch {
+                    config: self.config.clone(),
+                    keys: snapshot.projects.iter().map(|p| p.name.clone()).collect(),
+                }];
+            }
+            KeyCode::Char('S') => {
+                // It pulls into working trees: asked for twice.
+                self.armed = Some("@sync".to_string());
+                self.said =
+                    "enter syncs every project: clones what is missing, then pulls (meta git sync)"
+                        .to_string();
+            }
             KeyCode::Char(way @ ('[' | ']')) => {
                 let at = Span::ALL
                     .iter()
@@ -606,6 +760,39 @@ impl App {
                 self.said = said;
                 Vec::new()
             }
+            Tell::Did { config, said } => {
+                self.said = said;
+                if config == self.config {
+                    return self.read_again();
+                }
+                Vec::new()
+            }
+            Tell::Page { title, result } => {
+                match result {
+                    Ok(lines) => {
+                        self.said.clear();
+                        self.page = Some(Page {
+                            title,
+                            lines,
+                            at: 0,
+                        });
+                    }
+                    Err(why) => self.said = why,
+                }
+                Vec::new()
+            }
+            Tell::Sessions { config, list } => {
+                let (Some(list), Some(snapshot), true) =
+                    (list, self.snapshot.as_mut(), config == self.config)
+                else {
+                    return Vec::new();
+                };
+                let told = notices(&snapshot.sessions, &list);
+                super::place_sessions(&mut snapshot.board, &list);
+                snapshot.sessions = list;
+                self.refresh();
+                self.say_notices(told)
+            }
             Tell::Retiered { config, result } => {
                 self.said = result.unwrap_or_else(|why| format!("could not retier: {why}"));
                 if config == self.config {
@@ -644,18 +831,25 @@ impl App {
                     ));
                 }
                 self.status = said.join(" · ");
+                let told = match &self.snapshot {
+                    Some(before) => notices(&before.sessions, &snapshot.sessions),
+                    None => Vec::new(),
+                };
                 self.snapshot = Some(*snapshot);
+                self.sessions_at = Instant::now();
                 self.refresh();
+                let mut asks = self.say_notices(told);
                 if quick {
                     // Git and sessions are in: now the slow half.
-                    return vec![Ask::Read {
+                    asks.push(Ask::Read {
                         config: self.config.clone(),
                         quick: false,
-                    }];
+                    });
+                    return asks;
                 }
                 self.reading = false;
                 self.read_at = Some(Instant::now());
-                Vec::new()
+                asks
             }
             Tell::Read {
                 result: Err(error), ..
@@ -668,11 +862,35 @@ impl App {
         }
     }
 
-    /// Called between events: reads again once what is shown has gone stale.
+    /// Say what changed among the sessions, here and to the host.
+    fn say_notices(&mut self, told: Vec<String>) -> Vec<Ask> {
+        if told.is_empty() {
+            return Vec::new();
+        }
+        self.said = told.join(" · ");
+        told.into_iter().map(|text| Ask::Notify { text }).collect()
+    }
+
+    /// Called between events: reads again once what is shown has gone stale,
+    /// and asks after the sessions alone more often than that.
     pub fn tick(&mut self) -> Vec<Ask> {
         self.frame = self.frame.wrapping_add(1);
         if self.read_at.is_some_and(|at| at.elapsed() >= STALE) {
             return self.read_again();
+        }
+        if let (Some(snapshot), false) = (&self.snapshot, self.reading) {
+            if self.sessions_at.elapsed() >= SESSIONS_EVERY {
+                self.sessions_at = Instant::now();
+                return vec![Ask::Sessions {
+                    config: self.config.clone(),
+                    keys: snapshot.projects.iter().map(|p| p.name.clone()).collect(),
+                    slugs: snapshot
+                        .projects
+                        .iter()
+                        .filter_map(|p| Some((p.slug.as_ref()?.to_lowercase(), p.name.clone())))
+                        .collect(),
+                }];
+            }
         }
         Vec::new()
     }
@@ -685,7 +903,7 @@ impl App {
         let detail_height = if detail.is_empty() {
             0
         } else {
-            detail.len().min(6) as u16 + 1
+            detail.len().min(DETAIL_ROWS) as u16 + 1
         };
         let [tabs, body, under, footer] = Layout::vertical([
             Constraint::Length(1),
@@ -776,7 +994,7 @@ impl App {
         if detail_height > 0 {
             let lines: Vec<Line> = detail
                 .iter()
-                .take(6)
+                .take(DETAIL_ROWS)
                 .map(|line| Line::from(format!("  {line}")))
                 .collect();
             let block = Block::default()
@@ -841,10 +1059,45 @@ impl App {
         if let Some(menu) = &self.menu {
             draw_menu(frame, menu);
         }
+        if let Some(page) = &self.page {
+            draw_page(frame, page);
+        }
         if self.help {
             draw_help(frame);
         }
     }
+}
+
+fn draw_page(frame: &mut Frame, page: &Page) {
+    let area = frame.area();
+    let width = 100
+        .min(area.width.saturating_sub(4))
+        .max(20)
+        .min(area.width);
+    let height = area.height.saturating_sub(2).max(3).min(area.height);
+    let spot = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, spot);
+    let lines: Vec<Line> = page
+        .lines
+        .iter()
+        .skip(page.at)
+        .map(|line| Line::raw(line.clone()))
+        .collect();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} ", page.title))
+        .title_bottom(" j/k scroll · any other key closes ");
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .block(block),
+        spot,
+    );
 }
 
 fn draw_menu(frame: &mut Frame, menu: &Menu) {
@@ -952,6 +1205,10 @@ fn draw_help(frame: &mut Frame) {
         "enter, space     open or close a group; switch workspace;",
         "                 attach a session; start work on an issue (asks twice)",
         "p                send a prompt to the selected session (in a pane opened here)",
+        "o                read the selected issue",
+        "m                the model a started session runs on",
+        "f                fetch every project",
+        "S                sync every project: clone what is missing, then pull (asks twice)",
         "/                filter the view (esc clears)",
         "[ ]              the period Cost adds up",
         "r                read the workspace again",
@@ -1008,16 +1265,59 @@ fn reader(asks: mpsc::Receiver<Ask>, tells: mpsc::Sender<Tell>, host: Host, meta
                 };
                 Tell::Retiered { config, result }
             }
-            Ask::Start { config, issue } => {
+            Ask::Fetch { config, keys } => {
+                let said = match config.parent() {
+                    Some(root) => actions::fetch_all(root, &keys),
+                    None => "the workspace has no folder".to_string(),
+                };
+                Tell::Did { config, said }
+            }
+            Ask::Sync { config } => {
+                let said = match config.parent() {
+                    Some(root) => actions::sync_all(&meta, root),
+                    None => "the workspace has no folder".to_string(),
+                };
+                Tell::Did { config, said }
+            }
+            Ask::Issue {
+                config,
+                project,
+                number,
+                title,
+            } => {
                 let result = match config.parent() {
-                    Some(root) => start::start(&meta, root, host, &issue),
+                    Some(root) => actions::issue_text(root, &project, number),
+                    None => Err("the workspace has no folder".to_string()),
+                };
+                Tell::Page {
+                    title: format!("{project} #{number} {title}"),
+                    result,
+                }
+            }
+            Ask::Sessions {
+                config,
+                keys,
+                slugs,
+            } => {
+                let list = config
+                    .parent()
+                    .and_then(|root| sessions::read(root, &keys, &slugs));
+                Tell::Sessions { config, list }
+            }
+            Ask::Start {
+                config,
+                issue,
+                model,
+            } => {
+                let result = match config.parent() {
+                    Some(root) => start::start(&meta, root, host, &issue, model.as_deref()),
                     None => Err("the workspace has no folder".to_string()),
                 };
                 Tell::Started { config, result }
             }
             // Attaching and sending are the interface's own to do: one may
             // need the terminal, the other is a moment's work.
-            Ask::Attach { .. } | Ask::Send { .. } => continue,
+            Ask::Attach { .. } | Ask::Send { .. } | Ask::Notify { .. } => continue,
         };
         if tells.send(told).is_err() {
             break;
@@ -1135,6 +1435,7 @@ pub fn run(config: &RuntimeConfig) -> Result<()> {
                         };
                         asked.extend(app.on_tell(told));
                     }
+                    Ask::Notify { text } => host::notify(&host::glxy_term, host, &text),
                     Ask::Send { name, pane, text } => {
                         let result = host::send(&host::glxy_term, pane, &text);
                         asked.extend(app.on_tell(Tell::Sent { name, pane, result }));
@@ -1487,7 +1788,7 @@ mod tests {
         assert!(app.on_key(key(KeyCode::Enter)).is_empty());
         let asked = app.on_key(key(KeyCode::Enter));
         assert!(
-            matches!(&asked[..], [Ask::Start { config, issue }] if config == Path::new("/ws/.metarepo") && issue.name() == "mind-7")
+            matches!(&asked[..], [Ask::Start { config, issue, model: None }] if config == Path::new("/ws/.metarepo") && issue.name() == "mind-7")
         );
         let more = app.on_tell(Tell::Started {
             config: "/ws/.metarepo".into(),
@@ -1706,5 +2007,165 @@ mod tests {
         });
         assert_eq!(more.len(), 1);
         assert!(screen(&mut app, 120, 20)[19].contains("committed as abc1234"));
+    }
+
+    #[test]
+    fn a_session_that_stops_working_is_said_and_the_board_follows() {
+        let mut app = app();
+        let mut list = app.snapshot.as_ref().unwrap().sessions.clone();
+        // claw-254 was busy on a branch with failing checks; now it asks for a person.
+        let at = list.iter().position(|s| s.name == "claw-254").unwrap();
+        list[at].status = "permission".into();
+        list[at].needs_you = true;
+        let asked = app.on_tell(Tell::Sessions {
+            config: "/ws/.metarepo".into(),
+            list: Some(list.clone()),
+        });
+        assert_eq!(
+            asked,
+            vec![Ask::Notify {
+                text: "claw-254 is waiting on you".into()
+            }]
+        );
+        assert!(screen(&mut app, 120, 20)[19].contains("claw-254 is waiting on you"));
+        let snapshot = app.snapshot.as_ref().unwrap();
+        let item = snapshot
+            .board
+            .iter()
+            .find(|i| i.branch == "feat/254-pane")
+            .unwrap();
+        assert_eq!(item.section, crate::plugins::dash::Section::Attention);
+        // Then it finishes. A session that was not busy says nothing by changing.
+        list[at].status = "busy".into();
+        list[at].needs_you = false;
+        app.on_tell(Tell::Sessions {
+            config: "/ws/.metarepo".into(),
+            list: Some(list.clone()),
+        });
+        list[at].status = "done".into();
+        let asked = app.on_tell(Tell::Sessions {
+            config: "/ws/.metarepo".into(),
+            list: Some(list.clone()),
+        });
+        assert_eq!(
+            asked,
+            vec![Ask::Notify {
+                text: "claw-254 finished".into()
+            }]
+        );
+        assert!(app
+            .on_tell(Tell::Sessions {
+                config: "/ws/.metarepo".into(),
+                list: Some(list)
+            })
+            .is_empty());
+        // No list, or another workspace's, changes nothing.
+        assert!(app
+            .on_tell(Tell::Sessions {
+                config: "/ws/.metarepo".into(),
+                list: None
+            })
+            .is_empty());
+        assert_eq!(app.snapshot.as_ref().unwrap().sessions.len(), 3);
+    }
+
+    #[test]
+    fn the_sessions_are_asked_after_between_whole_reads() {
+        let mut app = app();
+        assert!(app.tick().is_empty());
+        app.sessions_at = Instant::now() - SESSIONS_EVERY;
+        let asked = app.tick();
+        assert!(
+            matches!(&asked[..], [Ask::Sessions { keys, slugs, .. }] if keys.len() == 4 && slugs.get("org/claw").map(String::as_str) == Some("claw"))
+        );
+        assert!(app.tick().is_empty());
+    }
+
+    #[test]
+    fn an_issue_is_read_in_a_page_that_scrolls_and_closes() {
+        let mut app = app();
+        // On a row that is no issue, o says what it is for.
+        app.on_key(key(KeyCode::Char('2')));
+        assert!(app.on_key(key(KeyCode::Char('o'))).is_empty());
+        app.on_key(key(KeyCode::Char('4')));
+        app.on_key(key(KeyCode::Char('j')));
+        let asked = app.on_key(key(KeyCode::Char('o')));
+        assert!(
+            matches!(&asked[..], [Ask::Issue { project, number: 7, title, .. }] if project == "mind" && title == "Data loss on save")
+        );
+        app.on_tell(Tell::Page {
+            title: "mind #7 Data loss on save".into(),
+            result: Ok((0..40).map(|n| format!("line {n}")).collect()),
+        });
+        let lines = screen(&mut app, 100, 20);
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("mind #7 Data loss on save")));
+        assert!(lines.iter().any(|l| l.contains("line 0")));
+        app.on_key(key(KeyCode::Char(' ')));
+        app.on_key(key(KeyCode::Char('j')));
+        let lines = screen(&mut app, 100, 20);
+        assert!(
+            lines.iter().any(|l| l.contains("line 11"))
+                && !lines.iter().any(|l| l.contains("line 10 "))
+        );
+        // Any other key closes it, and is not also acted on.
+        app.on_key(key(KeyCode::Char('q')));
+        assert!(app.page.is_none() && !app.quit);
+        app.on_tell(Tell::Page {
+            title: String::new(),
+            result: Err("could not load #7 of org/mind".into()),
+        });
+        assert!(app.page.is_none());
+        assert!(screen(&mut app, 100, 20)[19].contains("could not load #7"));
+    }
+
+    #[test]
+    fn fetch_runs_at_once_and_sync_asks_first() {
+        let mut app = app();
+        let asked = app.on_key(key(KeyCode::Char('f')));
+        assert!(matches!(&asked[..], [Ask::Fetch { keys, .. }] if keys.len() == 4));
+        let more = app.on_tell(Tell::Did {
+            config: "/ws/.metarepo".into(),
+            said: "fetched 4 projects".into(),
+        });
+        assert_eq!(more.len(), 1);
+        assert!(screen(&mut app, 120, 20)[19].contains("fetched 4 projects"));
+        app.reading = false;
+        assert!(app.on_key(key(KeyCode::Char('S'))).is_empty());
+        assert!(screen(&mut app, 120, 20)[19].contains("enter syncs every project"));
+        // Another key takes it back.
+        app.on_key(key(KeyCode::Char('j')));
+        assert!(!matches!(
+            &app.on_key(key(KeyCode::Enter))[..],
+            [Ask::Sync { .. }]
+        ));
+        app.on_key(key(KeyCode::Char('S')));
+        assert!(matches!(
+            &app.on_key(key(KeyCode::Enter))[..],
+            [Ask::Sync { .. }]
+        ));
+    }
+
+    #[test]
+    fn the_model_a_session_starts_on_can_be_chosen() {
+        let mut app = app();
+        app.host = Host::GlxyTerm;
+        app.on_key(key(KeyCode::Char('m')));
+        app.on_key(key(KeyCode::Char('m')));
+        assert!(screen(&mut app, 120, 20)[19].contains("sessions started here run on Opus 5.5"));
+        app.on_key(key(KeyCode::Char('4')));
+        app.on_key(key(KeyCode::Char('j')));
+        app.on_key(key(KeyCode::Enter));
+        assert!(screen(&mut app, 160, 20)[19].contains("on Opus 5.5 (m changes it)"));
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert!(
+            matches!(&asked[..], [Ask::Start { model: Some(model), .. }] if model == "claude-opus-5-5")
+        );
+        // Round to the default again: no model is named.
+        for _ in 0..3 {
+            app.on_key(key(KeyCode::Char('m')));
+        }
+        assert_eq!(app.model, 0);
     }
 }
