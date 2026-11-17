@@ -20,17 +20,34 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use super::branches::{self, Branch, Finish, Method};
 use super::host::{self, Host};
 use super::start::{self, Started, Wanted};
 use super::view::{self, Act, Kind, Offer, Row, Span, Tone, Ui, View};
 use super::workspaces::{self, Workspace};
-use super::{gather, retier, Move, Options, Snapshot};
+use super::{actions, gather, retier, sessions, Move, Options, Session, Snapshot};
 
 /// How long a snapshot is shown before it is read again unasked.
 const STALE: Duration = Duration::from_secs(120);
 const SPIN: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const KEYS: &str =
-    "1-7 view · j/k move · enter open, attach or start · p send a prompt · / filter · r read again · ? help · q quit";
+    "1-7 view · j/k move · enter open, attach or start · p prompt · o issue · x finish · b branches · ? help · q quit";
+
+/// The most rows the detail under the list takes.
+const DETAIL_ROWS: usize = 10;
+
+/// How often the sessions alone are asked after, between whole reads.
+const SESSIONS_EVERY: Duration = Duration::from_secs(30);
+
+/// The models a session can be started on; the first is whatever Claude
+/// Code is set to use. A background session takes the full id.
+const MODELS: [(&str, &str); 5] = [
+    ("", "Claude's default model"),
+    ("claude-fable-5-2", "Fable 5.2"),
+    ("claude-opus-5-5", "Opus 5.5"),
+    ("claude-sonnet-5-5", "Sonnet 5.5"),
+    ("claude-haiku-5-5", "Haiku 5.5"),
+];
 
 /// What the interface asks of the reader thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,7 +58,46 @@ pub enum Ask {
     /// Apply tier moves: the labels, the README's Tier column, one commit.
     Retier { config: PathBuf, moves: Vec<Move> },
     /// Create a worktree for an issue and start a session on it.
-    Start { config: PathBuf, issue: Wanted },
+    Start {
+        config: PathBuf,
+        issue: Wanted,
+        /// The model to start it on; `None` for Claude's default.
+        model: Option<String>,
+    },
+    /// Fetch every project from its origin.
+    Fetch { config: PathBuf, keys: Vec<String> },
+    /// Clone what is missing and pull every project (`meta git sync`).
+    Sync { config: PathBuf },
+    /// Read an issue's text from GitHub.
+    Issue {
+        config: PathBuf,
+        project: String,
+        number: u64,
+        title: String,
+    },
+    /// List a project's remote branches by what became of them.
+    Branches { config: PathBuf, project: String },
+    /// Delete remote branches, each named with the commit it was seen at.
+    Prune {
+        config: PathBuf,
+        project: String,
+        picks: Vec<(String, String)>,
+    },
+    /// Finish a branch: open its pull request, merge it, or clear up after.
+    Finish {
+        config: PathBuf,
+        project: String,
+        branch: String,
+        how: Finish,
+    },
+    /// List the Claude sessions again, without reading anything else.
+    Sessions {
+        config: PathBuf,
+        keys: Vec<String>,
+        slugs: HashMap<String, String>,
+    },
+    /// Tell the person something happened: a toast, or the bell.
+    Notify { text: String },
     /// Bring a session to the front: in the pane it already has (`pane`), a
     /// new pane, or this terminal where there is no host to ask.
     Attach {
@@ -74,6 +130,23 @@ pub enum Tell {
         config: PathBuf,
         result: Result<Started, String>,
     },
+    /// A workspace action ended, with what it came to in one line.
+    Did { config: PathBuf, said: String },
+    /// An issue's text, or why it could not be read.
+    Page {
+        title: String,
+        result: Result<Vec<String>, String>,
+    },
+    /// A project's remote branches, or why they could not be listed.
+    Branches {
+        project: String,
+        result: Result<Vec<Branch>, String>,
+    },
+    /// The sessions, listed again; `None` when they could not be.
+    Sessions {
+        config: PathBuf,
+        list: Option<Vec<Session>>,
+    },
     /// Tier moves were applied, with what that came to in one line.
     Retiered {
         config: PathBuf,
@@ -100,6 +173,52 @@ struct Menu {
     offers: Vec<Offer>,
     /// The choice under the cursor; 0 is typing one.
     at: usize,
+}
+
+/// A project's remote branches, with the ones picked to delete.
+struct Picker {
+    project: String,
+    list: Vec<Branch>,
+    picked: Vec<bool>,
+    at: usize,
+    /// A first Enter was pressed: the next deletes.
+    armed: bool,
+}
+
+/// The ways to finish one branch.
+struct Finishing {
+    project: String,
+    branch: String,
+    ways: Vec<(String, Finish)>,
+    at: usize,
+    armed: bool,
+}
+
+/// Text to read, scrolled.
+struct Page {
+    title: String,
+    lines: Vec<String>,
+    at: usize,
+}
+
+/// What changed for a person between two lists of sessions: a session that
+/// was at work and now waits on them, or has finished.
+pub fn notices(before: &[Session], now: &[Session]) -> Vec<String> {
+    now.iter()
+        .filter(|session| session.status != "busy")
+        .filter(|session| {
+            before
+                .iter()
+                .any(|was| was.id == session.id && was.status == "busy")
+        })
+        .map(|session| {
+            if session.needs_you {
+                format!("{} is waiting on you", session.name)
+            } else {
+                format!("{} finished", session.name)
+            }
+        })
+        .collect()
 }
 
 /// A prompt being typed for the session in `pane`.
@@ -130,6 +249,16 @@ pub struct App {
     armed: Option<String>,
     /// What the last action came to, shown until the next one.
     said: String,
+    /// A project's remote branches to pick from, while the list is open.
+    picker: Option<Picker>,
+    /// The ways to finish a branch, while the list is open.
+    finishing: Option<Finishing>,
+    /// An issue's text being read, while it is open.
+    page: Option<Page>,
+    /// Which of [`MODELS`] a started session runs on.
+    model: usize,
+    /// When the sessions were last asked after.
+    sessions_at: Instant,
     /// The list of prompts to send a session, while it is open.
     menu: Option<Menu>,
     /// A prompt being typed for a session.
@@ -173,6 +302,11 @@ impl App {
             panes: HashMap::new(),
             armed: None,
             said: String::new(),
+            picker: None,
+            finishing: None,
+            page: None,
+            model: 0,
+            sessions_at: Instant::now(),
             menu: None,
             writing: None,
             typing: false,
@@ -333,17 +467,22 @@ impl App {
                         Host::None => "in the background",
                     };
                     self.said = format!(
-                        "enter again starts {name}: a worktree on {}, and a Claude session {place}",
-                        start::branch_for(&issue)
+                        "enter again starts {name}: a worktree on {}, and a Claude session {place}{}",
+                        start::branch_for(&issue),
+                        if self.model == 0 { String::new() } else { format!(" on {} (m changes it)", MODELS[self.model].1) }
                     );
                     self.armed = Some(name);
                     return Vec::new();
                 }
                 self.armed = None;
                 self.said = format!("creating a worktree on {}…", start::branch_for(&issue));
+                let model = Some(MODELS[self.model].0)
+                    .filter(|id| !id.is_empty())
+                    .map(String::from);
                 vec![Ask::Start {
                     config: self.config.clone(),
                     issue,
+                    model,
                 }]
             }
             None => Vec::new(),
@@ -458,6 +597,163 @@ impl App {
         Vec::new()
     }
 
+    /// Keys while a project's branches are listed.
+    fn on_picker_key(&mut self, key: KeyEvent) -> Vec<Ask> {
+        let Some(picker) = self.picker.as_mut() else {
+            return Vec::new();
+        };
+        let was_armed = std::mem::take(&mut picker.armed);
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                picker.at = (picker.at + 1).min(picker.list.len().saturating_sub(1))
+            }
+            KeyCode::Up | KeyCode::Char('k') => picker.at = picker.at.saturating_sub(1),
+            KeyCode::Char(' ') => {
+                // Only a branch whose work is merged or was turned down can be picked.
+                if picker
+                    .list
+                    .get(picker.at)
+                    .is_some_and(|b| b.kind.is_prunable())
+                {
+                    picker.picked[picker.at] = !picker.picked[picker.at];
+                }
+            }
+            KeyCode::Char('a') => {
+                let merged: Vec<bool> = picker
+                    .list
+                    .iter()
+                    .map(|b| b.kind == branches::Kind::Merged)
+                    .collect();
+                picker.picked = if picker.picked == merged {
+                    vec![false; merged.len()]
+                } else {
+                    merged
+                };
+            }
+            KeyCode::Enter => {
+                let picks: Vec<(String, String)> = picker
+                    .list
+                    .iter()
+                    .zip(&picker.picked)
+                    .filter(|(_, picked)| **picked)
+                    .map(|(branch, _)| (branch.name.clone(), branch.sha.clone()))
+                    .collect();
+                if picks.is_empty() {
+                    return Vec::new();
+                }
+                // Deleting is asked for twice.
+                if !was_armed {
+                    picker.armed = true;
+                    return Vec::new();
+                }
+                let project = picker.project.clone();
+                self.picker = None;
+                self.said = format!("deleting {} remote branches of {project}…", picks.len());
+                return vec![Ask::Prune {
+                    config: self.config.clone(),
+                    project,
+                    picks,
+                }];
+            }
+            _ => self.picker = None,
+        }
+        Vec::new()
+    }
+
+    /// The ways the selected branch can be finished, from what the board
+    /// knows of it.
+    fn offer_to_finish(&mut self) {
+        let Some((project, branch)) = self.selected().and_then(|row| row.branch.clone()) else {
+            self.said = "x finishes a branch: select one on the Board".to_string();
+            return;
+        };
+        let Some(snapshot) = &self.snapshot else {
+            return;
+        };
+        let Some(item) = snapshot
+            .board
+            .iter()
+            .find(|i| i.project == project && i.branch == branch)
+        else {
+            return;
+        };
+        let mut ways = Vec::new();
+        match &item.pr {
+            None if !item.path.is_empty() => {
+                // Named for an issue that is open: the pull request closes it.
+                let issue = super::github::issue_of_branch(&branch).filter(|n| {
+                    snapshot
+                        .issues
+                        .iter()
+                        .any(|i| i.project == project && i.number == *n)
+                });
+                let label = match issue {
+                    Some(n) => format!("Push it and open a pull request (closes #{n})"),
+                    None => "Push it and open a pull request".to_string(),
+                };
+                ways.push((label, Finish::OpenPr { issue }));
+            }
+            Some(pr) if !pr.is_draft => {
+                for method in Method::ALL {
+                    ways.push((
+                        format!("Merge #{} ({}), then clear up", pr.number, method.word()),
+                        Finish::Merge {
+                            pr: pr.number,
+                            method,
+                        },
+                    ));
+                }
+            }
+            _ => {}
+        }
+        ways.push((
+            "Clear up after a merge made elsewhere".to_string(),
+            Finish::Cleanup,
+        ));
+        self.said.clear();
+        self.finishing = Some(Finishing {
+            project,
+            branch,
+            ways,
+            at: 0,
+            armed: false,
+        });
+    }
+
+    /// Keys while the ways to finish a branch are listed.
+    fn on_finishing_key(&mut self, key: KeyEvent) -> Vec<Ask> {
+        let Some(menu) = self.finishing.as_mut() else {
+            return Vec::new();
+        };
+        let was_armed = std::mem::take(&mut menu.armed);
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                menu.at = (menu.at + 1).min(menu.ways.len().saturating_sub(1))
+            }
+            KeyCode::Up | KeyCode::Char('k') => menu.at = menu.at.saturating_sub(1),
+            KeyCode::Enter => {
+                // It pushes, merges or deletes: asked for twice.
+                if !was_armed {
+                    menu.armed = true;
+                    return Vec::new();
+                }
+                let Some(menu) = self.finishing.take() else {
+                    return Vec::new();
+                };
+                let (label, how) = menu.ways[menu.at].clone();
+                self.said = format!("{}: {}…", menu.branch, label.to_lowercase());
+                return vec![Ask::Finish {
+                    config: self.config.clone(),
+                    project: menu.project,
+                    branch: menu.branch,
+                    how,
+                }];
+            }
+            _ => self.finishing = None,
+        }
+        Vec::new()
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) -> Vec<Ask> {
         if key.kind == KeyEventKind::Release {
             return Vec::new();
@@ -469,6 +765,24 @@ impl App {
         if self.help {
             self.help = false;
             return Vec::new();
+        }
+        if let Some(page) = self.page.as_mut() {
+            let last = page.lines.len().saturating_sub(1);
+            match key.code {
+                KeyCode::Down | KeyCode::Char('j') => page.at = (page.at + 1).min(last),
+                KeyCode::Up | KeyCode::Char('k') => page.at = page.at.saturating_sub(1),
+                KeyCode::PageDown | KeyCode::Char(' ') => page.at = (page.at + 10).min(last),
+                KeyCode::PageUp => page.at = page.at.saturating_sub(10),
+                KeyCode::Home | KeyCode::Char('g') => page.at = 0,
+                _ => self.page = None,
+            }
+            return Vec::new();
+        }
+        if self.picker.is_some() {
+            return self.on_picker_key(key);
+        }
+        if self.finishing.is_some() {
+            return self.on_finishing_key(key);
         }
         if self.menu.is_some() {
             return self.on_menu_key(key);
@@ -496,6 +810,13 @@ impl App {
         if !matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) && self.armed.take().is_some() {
             self.said.clear();
         }
+        if key.code == KeyCode::Enter && self.armed.as_deref() == Some("@sync") {
+            self.armed = None;
+            self.said = "syncing every project…".to_string();
+            return vec![Ask::Sync {
+                config: self.config.clone(),
+            }];
+        }
         match key.code {
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('?') => self.help = true,
@@ -517,6 +838,61 @@ impl App {
             }
             KeyCode::Char('r') => return self.read_again(),
             KeyCode::Char('p') => self.offer_to_send(),
+            KeyCode::Char('x') => self.offer_to_finish(),
+            KeyCode::Char('b') => {
+                let Some(project) = self.selected().and_then(|row| row.project.clone()) else {
+                    self.said =
+                        "b lists a project's remote branches: select one on Projects".to_string();
+                    return Vec::new();
+                };
+                self.said = format!("reading the branches of {project}…");
+                return vec![Ask::Branches {
+                    config: self.config.clone(),
+                    project,
+                }];
+            }
+            KeyCode::Char('m') => {
+                self.model = (self.model + 1) % MODELS.len();
+                self.said = format!("sessions started here run on {}", MODELS[self.model].1);
+            }
+            KeyCode::Char('o') => {
+                let Some((project, number)) = self.selected().and_then(|row| row.issue.clone())
+                else {
+                    self.said = "o reads an issue: select one".to_string();
+                    return Vec::new();
+                };
+                let title = self
+                    .snapshot
+                    .iter()
+                    .flat_map(|snapshot| &snapshot.issues)
+                    .find(|issue| issue.project == project && issue.number == number)
+                    .map(|issue| issue.title.clone())
+                    .unwrap_or_default();
+                self.said = format!("reading {project} #{number}…");
+                return vec![Ask::Issue {
+                    config: self.config.clone(),
+                    project,
+                    number,
+                    title,
+                }];
+            }
+            KeyCode::Char('f') => {
+                let Some(snapshot) = &self.snapshot else {
+                    return Vec::new();
+                };
+                self.said = "fetching every project…".to_string();
+                return vec![Ask::Fetch {
+                    config: self.config.clone(),
+                    keys: snapshot.projects.iter().map(|p| p.name.clone()).collect(),
+                }];
+            }
+            KeyCode::Char('S') => {
+                // It pulls into working trees: asked for twice.
+                self.armed = Some("@sync".to_string());
+                self.said =
+                    "enter syncs every project: clones what is missing, then pulls (meta git sync)"
+                        .to_string();
+            }
             KeyCode::Char(way @ ('[' | ']')) => {
                 let at = Span::ALL
                     .iter()
@@ -606,6 +982,63 @@ impl App {
                 self.said = said;
                 Vec::new()
             }
+            Tell::Did { config, said } => {
+                self.said = said;
+                if config == self.config {
+                    return self.read_again();
+                }
+                Vec::new()
+            }
+            Tell::Branches { project, result } => {
+                match result {
+                    Ok(list) if list.is_empty() => {
+                        self.said = format!("{project} has no remote branches besides its default")
+                    }
+                    Ok(list) => {
+                        self.said.clear();
+                        // What is merged starts picked; the rest is a person's to choose.
+                        let picked = list
+                            .iter()
+                            .map(|b| b.kind == branches::Kind::Merged)
+                            .collect();
+                        self.picker = Some(Picker {
+                            project,
+                            list,
+                            picked,
+                            at: 0,
+                            armed: false,
+                        });
+                    }
+                    Err(why) => self.said = why,
+                }
+                Vec::new()
+            }
+            Tell::Page { title, result } => {
+                match result {
+                    Ok(lines) => {
+                        self.said.clear();
+                        self.page = Some(Page {
+                            title,
+                            lines,
+                            at: 0,
+                        });
+                    }
+                    Err(why) => self.said = why,
+                }
+                Vec::new()
+            }
+            Tell::Sessions { config, list } => {
+                let (Some(list), Some(snapshot), true) =
+                    (list, self.snapshot.as_mut(), config == self.config)
+                else {
+                    return Vec::new();
+                };
+                let told = notices(&snapshot.sessions, &list);
+                super::place_sessions(&mut snapshot.board, &list);
+                snapshot.sessions = list;
+                self.refresh();
+                self.say_notices(told)
+            }
             Tell::Retiered { config, result } => {
                 self.said = result.unwrap_or_else(|why| format!("could not retier: {why}"));
                 if config == self.config {
@@ -644,18 +1077,25 @@ impl App {
                     ));
                 }
                 self.status = said.join(" · ");
+                let told = match &self.snapshot {
+                    Some(before) => notices(&before.sessions, &snapshot.sessions),
+                    None => Vec::new(),
+                };
                 self.snapshot = Some(*snapshot);
+                self.sessions_at = Instant::now();
                 self.refresh();
+                let mut asks = self.say_notices(told);
                 if quick {
                     // Git and sessions are in: now the slow half.
-                    return vec![Ask::Read {
+                    asks.push(Ask::Read {
                         config: self.config.clone(),
                         quick: false,
-                    }];
+                    });
+                    return asks;
                 }
                 self.reading = false;
                 self.read_at = Some(Instant::now());
-                Vec::new()
+                asks
             }
             Tell::Read {
                 result: Err(error), ..
@@ -668,11 +1108,35 @@ impl App {
         }
     }
 
-    /// Called between events: reads again once what is shown has gone stale.
+    /// Say what changed among the sessions, here and to the host.
+    fn say_notices(&mut self, told: Vec<String>) -> Vec<Ask> {
+        if told.is_empty() {
+            return Vec::new();
+        }
+        self.said = told.join(" · ");
+        told.into_iter().map(|text| Ask::Notify { text }).collect()
+    }
+
+    /// Called between events: reads again once what is shown has gone stale,
+    /// and asks after the sessions alone more often than that.
     pub fn tick(&mut self) -> Vec<Ask> {
         self.frame = self.frame.wrapping_add(1);
         if self.read_at.is_some_and(|at| at.elapsed() >= STALE) {
             return self.read_again();
+        }
+        if let (Some(snapshot), false) = (&self.snapshot, self.reading) {
+            if self.sessions_at.elapsed() >= SESSIONS_EVERY {
+                self.sessions_at = Instant::now();
+                return vec![Ask::Sessions {
+                    config: self.config.clone(),
+                    keys: snapshot.projects.iter().map(|p| p.name.clone()).collect(),
+                    slugs: snapshot
+                        .projects
+                        .iter()
+                        .filter_map(|p| Some((p.slug.as_ref()?.to_lowercase(), p.name.clone())))
+                        .collect(),
+                }];
+            }
         }
         Vec::new()
     }
@@ -685,7 +1149,7 @@ impl App {
         let detail_height = if detail.is_empty() {
             0
         } else {
-            detail.len().min(6) as u16 + 1
+            detail.len().min(DETAIL_ROWS) as u16 + 1
         };
         let [tabs, body, under, footer] = Layout::vertical([
             Constraint::Length(1),
@@ -776,7 +1240,7 @@ impl App {
         if detail_height > 0 {
             let lines: Vec<Line> = detail
                 .iter()
-                .take(6)
+                .take(DETAIL_ROWS)
                 .map(|line| Line::from(format!("  {line}")))
                 .collect();
             let block = Block::default()
@@ -841,10 +1305,172 @@ impl App {
         if let Some(menu) = &self.menu {
             draw_menu(frame, menu);
         }
+        if let Some(page) = &self.page {
+            draw_page(frame, page);
+        }
+        if let Some(picker) = &self.picker {
+            draw_picker(frame, picker);
+        }
+        if let Some(menu) = &self.finishing {
+            draw_finishing(frame, menu);
+        }
         if self.help {
             draw_help(frame);
         }
     }
+}
+
+/// A box in the middle of the screen, sized to its lines.
+fn draw_box(frame: &mut Frame, title: String, lines: Vec<Line>) {
+    let area = frame.area();
+    let widest = lines
+        .iter()
+        .map(Line::width)
+        .max()
+        .unwrap_or(0)
+        .max(title.chars().count());
+    let width = (widest as u16 + 4).min(area.width);
+    let height = (lines.len() as u16 + 2).min(area.height);
+    let spot = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, spot);
+    frame.render_widget(
+        Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title)),
+        spot,
+    );
+}
+
+fn draw_picker(frame: &mut Frame, picker: &Picker) {
+    let room = (frame.area().height as usize).saturating_sub(6).max(3);
+    let from = picker.at.saturating_sub(room - 1);
+    let width = picker
+        .list
+        .iter()
+        .map(|b| b.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    let mut lines: Vec<Line> = picker
+        .list
+        .iter()
+        .enumerate()
+        .skip(from)
+        .take(room)
+        .map(|(n, branch)| {
+            let mark = match (branch.kind.is_prunable(), picker.picked[n]) {
+                (false, _) => " · ",
+                (true, true) => "[x]",
+                (true, false) => "[ ]",
+            };
+            let pr = branch.pr.map_or(String::new(), |pr| format!(" #{pr}"));
+            let text = format!(
+                "{} {mark} {:<width$}  {}{pr}  {}  +{}",
+                if n == picker.at { "›" } else { " " },
+                branch.name,
+                branch.kind.word(),
+                branch.date,
+                branch.ahead
+            );
+            let style = if n == picker.at {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else if branch.kind.is_prunable() {
+                Style::default()
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            Line::styled(text, style)
+        })
+        .collect();
+    let picked = picker.picked.iter().filter(|p| **p).count();
+    lines.push(Line::raw(""));
+    lines.push(if picker.armed {
+        Line::styled(
+            format!("  enter again deletes {picked} on the remote (each is logged, so it can be put back)"),
+            Style::default().fg(Color::Yellow),
+        )
+    } else {
+        Line::styled(
+            format!("  space picks · a all merged · enter deletes the {picked} picked · esc closes"),
+            Style::default().fg(Color::DarkGray),
+        )
+    });
+    draw_box(
+        frame,
+        format!(" remote branches of {} ", picker.project),
+        lines,
+    );
+}
+
+fn draw_finishing(frame: &mut Frame, menu: &Finishing) {
+    let mut lines: Vec<Line> = menu
+        .ways
+        .iter()
+        .enumerate()
+        .map(|(n, (label, _))| {
+            let style = if n == menu.at {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            Line::styled(
+                format!("{} {label}", if n == menu.at { "›" } else { " " }),
+                style,
+            )
+        })
+        .collect();
+    lines.push(Line::raw(""));
+    lines.push(if menu.armed {
+        Line::styled("  enter again does it", Style::default().fg(Color::Yellow))
+    } else {
+        Line::styled(
+            "  enter chooses · esc closes",
+            Style::default().fg(Color::DarkGray),
+        )
+    });
+    draw_box(
+        frame,
+        format!(" finish {} {} ", menu.project, menu.branch),
+        lines,
+    );
+}
+
+fn draw_page(frame: &mut Frame, page: &Page) {
+    let area = frame.area();
+    let width = 100
+        .min(area.width.saturating_sub(4))
+        .max(20)
+        .min(area.width);
+    let height = area.height.saturating_sub(2).max(3).min(area.height);
+    let spot = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, spot);
+    let lines: Vec<Line> = page
+        .lines
+        .iter()
+        .skip(page.at)
+        .map(|line| Line::raw(line.clone()))
+        .collect();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} ", page.title))
+        .title_bottom(" j/k scroll · any other key closes ");
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(ratatui::widgets::Wrap { trim: false })
+            .block(block),
+        spot,
+    );
 }
 
 fn draw_menu(frame: &mut Frame, menu: &Menu) {
@@ -952,6 +1578,12 @@ fn draw_help(frame: &mut Frame) {
         "enter, space     open or close a group; switch workspace;",
         "                 attach a session; start work on an issue (asks twice)",
         "p                send a prompt to the selected session (in a pane opened here)",
+        "x                finish the selected branch: open its pull request, merge, clear up",
+        "b                a project's remote branches; delete the merged ones",
+        "o                read the selected issue",
+        "m                the model a started session runs on",
+        "f                fetch every project",
+        "S                sync every project: clone what is missing, then pull (asks twice)",
         "/                filter the view (esc clears)",
         "[ ]              the period Cost adds up",
         "r                read the workspace again",
@@ -959,7 +1591,8 @@ fn draw_help(frame: &mut Frame) {
         "",
         "Click a tab or a row; click a heading to open it; the wheel scrolls.",
         "Starting work on an issue makes a branch and a worktree, and runs Claude there.",
-        "Nothing else here changes a repository.",
+        "Fetch, sync, finishing a branch and deleting branches change repositories too;",
+        "each that pushes, merges or deletes asks twice.",
     ];
     let area = frame.area();
     let width = 72.min(area.width.saturating_sub(2));
@@ -1008,16 +1641,100 @@ fn reader(asks: mpsc::Receiver<Ask>, tells: mpsc::Sender<Tell>, host: Host, meta
                 };
                 Tell::Retiered { config, result }
             }
-            Ask::Start { config, issue } => {
+            Ask::Fetch { config, keys } => {
+                let said = match config.parent() {
+                    Some(root) => actions::fetch_all(root, &keys),
+                    None => "the workspace has no folder".to_string(),
+                };
+                Tell::Did { config, said }
+            }
+            Ask::Sync { config } => {
+                let said = match config.parent() {
+                    Some(root) => actions::sync_all(&meta, root),
+                    None => "the workspace has no folder".to_string(),
+                };
+                Tell::Did { config, said }
+            }
+            Ask::Issue {
+                config,
+                project,
+                number,
+                title,
+            } => {
                 let result = match config.parent() {
-                    Some(root) => start::start(&meta, root, host, &issue),
+                    Some(root) => actions::issue_text(root, &project, number),
+                    None => Err("the workspace has no folder".to_string()),
+                };
+                Tell::Page {
+                    title: format!("{project} #{number} {title}"),
+                    result,
+                }
+            }
+            Ask::Branches { config, project } => {
+                let result = match config.parent() {
+                    Some(root) => branches::list(root, &project),
+                    None => Err("the workspace has no folder".to_string()),
+                };
+                Tell::Branches { project, result }
+            }
+            Ask::Prune {
+                config,
+                project,
+                picks,
+            } => {
+                let said = match config.parent() {
+                    Some(root) => {
+                        branches::prune(root, &project, &picks, branches::log_path().as_deref())
+                    }
+                    None => "the workspace has no folder".to_string(),
+                };
+                Tell::Did { config, said }
+            }
+            Ask::Finish {
+                config,
+                project,
+                branch,
+                how,
+            } => {
+                let said = match config.parent() {
+                    Some(root) => match branches::finish(
+                        root,
+                        &project,
+                        &branch,
+                        &how,
+                        branches::log_path().as_deref(),
+                    ) {
+                        Ok(did) => format!("{branch}: {}", did.join(" · ")),
+                        Err(why) => format!("{branch}: {why}"),
+                    },
+                    None => "the workspace has no folder".to_string(),
+                };
+                Tell::Did { config, said }
+            }
+            Ask::Sessions {
+                config,
+                keys,
+                slugs,
+            } => {
+                let list = config
+                    .parent()
+                    .and_then(|root| sessions::read(root, &keys, &slugs));
+                Tell::Sessions { config, list }
+            }
+            Ask::Start {
+                config,
+                issue,
+                model,
+            } => {
+                let result = match config.parent() {
+                    Some(root) => start::start(&meta, root, host, &issue, model.as_deref()),
                     None => Err("the workspace has no folder".to_string()),
                 };
                 Tell::Started { config, result }
             }
             // Attaching and sending are the interface's own to do: one may
             // need the terminal, the other is a moment's work.
-            Ask::Attach { .. } | Ask::Send { .. } => continue,
+            Ask::Attach { .. } | Ask::Send { .. } | Ask::Notify { .. } => continue,
         };
         if tells.send(told).is_err() {
             break;
@@ -1135,6 +1852,7 @@ pub fn run(config: &RuntimeConfig) -> Result<()> {
                         };
                         asked.extend(app.on_tell(told));
                     }
+                    Ask::Notify { text } => host::notify(&host::glxy_term, host, &text),
                     Ask::Send { name, pane, text } => {
                         let result = host::send(&host::glxy_term, pane, &text);
                         asked.extend(app.on_tell(Tell::Sent { name, pane, result }));
@@ -1487,7 +2205,7 @@ mod tests {
         assert!(app.on_key(key(KeyCode::Enter)).is_empty());
         let asked = app.on_key(key(KeyCode::Enter));
         assert!(
-            matches!(&asked[..], [Ask::Start { config, issue }] if config == Path::new("/ws/.metarepo") && issue.name() == "mind-7")
+            matches!(&asked[..], [Ask::Start { config, issue, model: None }] if config == Path::new("/ws/.metarepo") && issue.name() == "mind-7")
         );
         let more = app.on_tell(Tell::Started {
             config: "/ws/.metarepo".into(),
@@ -1706,5 +2424,320 @@ mod tests {
         });
         assert_eq!(more.len(), 1);
         assert!(screen(&mut app, 120, 20)[19].contains("committed as abc1234"));
+    }
+
+    #[test]
+    fn a_session_that_stops_working_is_said_and_the_board_follows() {
+        let mut app = app();
+        let mut list = app.snapshot.as_ref().unwrap().sessions.clone();
+        // claw-254 was busy on a branch with failing checks; now it asks for a person.
+        let at = list.iter().position(|s| s.name == "claw-254").unwrap();
+        list[at].status = "permission".into();
+        list[at].needs_you = true;
+        let asked = app.on_tell(Tell::Sessions {
+            config: "/ws/.metarepo".into(),
+            list: Some(list.clone()),
+        });
+        assert_eq!(
+            asked,
+            vec![Ask::Notify {
+                text: "claw-254 is waiting on you".into()
+            }]
+        );
+        assert!(screen(&mut app, 120, 20)[19].contains("claw-254 is waiting on you"));
+        let snapshot = app.snapshot.as_ref().unwrap();
+        let item = snapshot
+            .board
+            .iter()
+            .find(|i| i.branch == "feat/254-pane")
+            .unwrap();
+        assert_eq!(item.section, crate::plugins::dash::Section::Attention);
+        // Then it finishes. A session that was not busy says nothing by changing.
+        list[at].status = "busy".into();
+        list[at].needs_you = false;
+        app.on_tell(Tell::Sessions {
+            config: "/ws/.metarepo".into(),
+            list: Some(list.clone()),
+        });
+        list[at].status = "done".into();
+        let asked = app.on_tell(Tell::Sessions {
+            config: "/ws/.metarepo".into(),
+            list: Some(list.clone()),
+        });
+        assert_eq!(
+            asked,
+            vec![Ask::Notify {
+                text: "claw-254 finished".into()
+            }]
+        );
+        assert!(app
+            .on_tell(Tell::Sessions {
+                config: "/ws/.metarepo".into(),
+                list: Some(list)
+            })
+            .is_empty());
+        // No list, or another workspace's, changes nothing.
+        assert!(app
+            .on_tell(Tell::Sessions {
+                config: "/ws/.metarepo".into(),
+                list: None
+            })
+            .is_empty());
+        assert_eq!(app.snapshot.as_ref().unwrap().sessions.len(), 3);
+    }
+
+    #[test]
+    fn the_sessions_are_asked_after_between_whole_reads() {
+        let mut app = app();
+        assert!(app.tick().is_empty());
+        app.sessions_at = Instant::now() - SESSIONS_EVERY;
+        let asked = app.tick();
+        assert!(
+            matches!(&asked[..], [Ask::Sessions { keys, slugs, .. }] if keys.len() == 4 && slugs.get("org/claw").map(String::as_str) == Some("claw"))
+        );
+        assert!(app.tick().is_empty());
+    }
+
+    #[test]
+    fn an_issue_is_read_in_a_page_that_scrolls_and_closes() {
+        let mut app = app();
+        // On a row that is no issue, o says what it is for.
+        app.on_key(key(KeyCode::Char('2')));
+        assert!(app.on_key(key(KeyCode::Char('o'))).is_empty());
+        app.on_key(key(KeyCode::Char('4')));
+        app.on_key(key(KeyCode::Char('j')));
+        let asked = app.on_key(key(KeyCode::Char('o')));
+        assert!(
+            matches!(&asked[..], [Ask::Issue { project, number: 7, title, .. }] if project == "mind" && title == "Data loss on save")
+        );
+        app.on_tell(Tell::Page {
+            title: "mind #7 Data loss on save".into(),
+            result: Ok((0..40).map(|n| format!("line {n}")).collect()),
+        });
+        let lines = screen(&mut app, 100, 20);
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("mind #7 Data loss on save")));
+        assert!(lines.iter().any(|l| l.contains("line 0")));
+        app.on_key(key(KeyCode::Char(' ')));
+        app.on_key(key(KeyCode::Char('j')));
+        let lines = screen(&mut app, 100, 20);
+        assert!(
+            lines.iter().any(|l| l.contains("line 11"))
+                && !lines.iter().any(|l| l.contains("line 10 "))
+        );
+        // Any other key closes it, and is not also acted on.
+        app.on_key(key(KeyCode::Char('q')));
+        assert!(app.page.is_none() && !app.quit);
+        app.on_tell(Tell::Page {
+            title: String::new(),
+            result: Err("could not load #7 of org/mind".into()),
+        });
+        assert!(app.page.is_none());
+        assert!(screen(&mut app, 100, 20)[19].contains("could not load #7"));
+    }
+
+    #[test]
+    fn fetch_runs_at_once_and_sync_asks_first() {
+        let mut app = app();
+        let asked = app.on_key(key(KeyCode::Char('f')));
+        assert!(matches!(&asked[..], [Ask::Fetch { keys, .. }] if keys.len() == 4));
+        let more = app.on_tell(Tell::Did {
+            config: "/ws/.metarepo".into(),
+            said: "fetched 4 projects".into(),
+        });
+        assert_eq!(more.len(), 1);
+        assert!(screen(&mut app, 120, 20)[19].contains("fetched 4 projects"));
+        app.reading = false;
+        assert!(app.on_key(key(KeyCode::Char('S'))).is_empty());
+        assert!(screen(&mut app, 120, 20)[19].contains("enter syncs every project"));
+        // Another key takes it back.
+        app.on_key(key(KeyCode::Char('j')));
+        assert!(!matches!(
+            &app.on_key(key(KeyCode::Enter))[..],
+            [Ask::Sync { .. }]
+        ));
+        app.on_key(key(KeyCode::Char('S')));
+        assert!(matches!(
+            &app.on_key(key(KeyCode::Enter))[..],
+            [Ask::Sync { .. }]
+        ));
+    }
+
+    #[test]
+    fn the_model_a_session_starts_on_can_be_chosen() {
+        let mut app = app();
+        app.host = Host::GlxyTerm;
+        app.on_key(key(KeyCode::Char('m')));
+        app.on_key(key(KeyCode::Char('m')));
+        assert!(screen(&mut app, 120, 20)[19].contains("sessions started here run on Opus 5.5"));
+        app.on_key(key(KeyCode::Char('4')));
+        app.on_key(key(KeyCode::Char('j')));
+        app.on_key(key(KeyCode::Enter));
+        assert!(screen(&mut app, 160, 20)[19].contains("on Opus 5.5 (m changes it)"));
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert!(
+            matches!(&asked[..], [Ask::Start { model: Some(model), .. }] if model == "claude-opus-5-5")
+        );
+        // Round to the default again: no model is named.
+        for _ in 0..3 {
+            app.on_key(key(KeyCode::Char('m')));
+        }
+        assert_eq!(app.model, 0);
+    }
+
+    fn branch(name: &str, kind: branches::Kind) -> Branch {
+        Branch {
+            name: name.into(),
+            sha: format!("sha-{name}"),
+            date: "2026-11-01".into(),
+            ahead: 0,
+            kind,
+            pr: None,
+        }
+    }
+
+    #[test]
+    fn merged_remote_branches_are_picked_and_deleted_on_a_second_enter() {
+        let mut app = app();
+        // b is for a project row.
+        assert!(app.on_key(key(KeyCode::Char('b'))).is_empty());
+        app.on_key(key(KeyCode::Char('2')));
+        app.on_key(key(KeyCode::Char('j')));
+        let asked = app.on_key(key(KeyCode::Char('b')));
+        assert!(matches!(&asked[..], [Ask::Branches { project, .. }] if project == "claw"));
+        app.on_tell(Tell::Branches {
+            project: "claw".into(),
+            result: Ok(vec![
+                branch("done", branches::Kind::Merged),
+                branch("refused", branches::Kind::Closed),
+                branch("wip", branches::Kind::None),
+            ]),
+        });
+        let lines = screen(&mut app, 120, 20);
+        assert!(lines.iter().any(|l| l.contains("remote branches of claw")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("› [x] done") && l.contains("merged")));
+        assert!(lines.iter().any(|l| l.contains("[ ] refused")));
+        assert!(lines.iter().any(|l| l.contains(" ·  wip")));
+        // Work with no pull request cannot be picked; a turned-down branch can.
+        app.on_key(key(KeyCode::Char('j')));
+        app.on_key(key(KeyCode::Char(' ')));
+        app.on_key(key(KeyCode::Char('j')));
+        app.on_key(key(KeyCode::Char(' ')));
+        assert_eq!(app.picker.as_ref().unwrap().picked, vec![true, true, false]);
+        // The first Enter asks; moving takes it back; two in a row delete.
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        assert!(screen(&mut app, 120, 20)
+            .iter()
+            .any(|l| l.contains("enter again deletes 2 on the remote")));
+        app.on_key(key(KeyCode::Char('k')));
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert_eq!(
+            asked,
+            vec![Ask::Prune {
+                config: "/ws/.metarepo".into(),
+                project: "claw".into(),
+                picks: vec![
+                    ("done".into(), "sha-done".into()),
+                    ("refused".into(), "sha-refused".into())
+                ],
+            }]
+        );
+        assert!(app.picker.is_none());
+        // Nothing picked: Enter does nothing. Esc closes without deleting.
+        app.on_tell(Tell::Branches {
+            project: "claw".into(),
+            result: Ok(vec![branch("wip", branches::Kind::None)]),
+        });
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        app.on_key(key(KeyCode::Esc));
+        assert!(app.picker.is_none());
+        app.on_tell(Tell::Branches {
+            project: "claw".into(),
+            result: Ok(Vec::new()),
+        });
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
+    fn a_branch_is_finished_by_what_the_board_knows_of_it() {
+        let mut app = app();
+        // x is for a branch on the board.
+        app.on_key(key(KeyCode::Char('2')));
+        app.on_key(key(KeyCode::Char('x')));
+        assert!(app.finishing.is_none());
+        // Needs fixing leads the Board: claw feat/254-pane, with pull request #7.
+        app.on_key(key(KeyCode::Char('3')));
+        app.on_key(key(KeyCode::Char('j')));
+        app.on_key(key(KeyCode::Char('x')));
+        let lines = screen(&mut app, 120, 20);
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("finish claw feat/254-pane")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("› Merge #7 (squash), then clear up")));
+        assert!(lines
+            .iter()
+            .any(|l| l.contains("Clear up after a merge made elsewhere")));
+        app.on_key(key(KeyCode::Char('j')));
+        assert!(app.on_key(key(KeyCode::Enter)).is_empty());
+        assert!(screen(&mut app, 120, 20)
+            .iter()
+            .any(|l| l.contains("enter again does it")));
+        let asked = app.on_key(key(KeyCode::Enter));
+        assert_eq!(
+            asked,
+            vec![Ask::Finish {
+                config: "/ws/.metarepo".into(),
+                project: "claw".into(),
+                branch: "feat/254-pane".into(),
+                how: Finish::Merge {
+                    pr: 7,
+                    method: Method::Merge
+                },
+            }]
+        );
+        let more = app.on_tell(Tell::Did {
+            config: "/ws/.metarepo".into(),
+            said: "feat/254-pane: merged #7 · deleted the remote branch".into(),
+        });
+        assert_eq!(more.len(), 1);
+
+        // A worktree with no pull request is offered a push and a pull request.
+        app.reading = false;
+        app.ui = Ui {
+            toggled: ["board:idle".to_string()].into(),
+            ..Ui::default()
+        };
+        app.refresh();
+        let at = app
+            .rows
+            .iter()
+            .position(|row| row.text().contains("feat/9-idle"))
+            .unwrap();
+        app.places.insert(View::Board, (at, 0));
+        app.on_key(key(KeyCode::Char('x')));
+        let ways: Vec<&str> = app
+            .finishing
+            .as_ref()
+            .unwrap()
+            .ways
+            .iter()
+            .map(|(label, _)| label.as_str())
+            .collect();
+        assert_eq!(
+            ways,
+            vec![
+                "Push it and open a pull request",
+                "Clear up after a merge made elsewhere"
+            ]
+        );
+        app.on_key(key(KeyCode::Esc));
+        assert!(app.finishing.is_none());
     }
 }

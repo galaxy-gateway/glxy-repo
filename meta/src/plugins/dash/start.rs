@@ -231,13 +231,24 @@ pub fn launch_in_pane(
     name: &str,
     path: &Path,
     prompt: &str,
+    model: Option<&str>,
 ) -> Result<u64, String> {
     std::fs::create_dir_all(scratch)
         .map_err(|e| format!("could not make {}: {e}", scratch.display()))?;
     let file = scratch.join(format!("{name}-{}.prompt", std::process::id()));
     write_private(&file, prompt).map_err(|e| format!("could not write the prompt: {e}"))?;
-    let script = r#"p=$(cat "$2"); rm -f "$2"; exec claude --name "$1" "$p""#;
-    let argv = ["sh", "-c", script, "sh", name, &file.to_string_lossy()].map(String::from);
+    // A model is named only when one was chosen: without, Claude's default.
+    let script = r#"p=$(cat "$2"); rm -f "$2"; exec claude --name "$1" ${3:+--model "$3"} "$p""#;
+    let argv = [
+        "sh",
+        "-c",
+        script,
+        "sh",
+        name,
+        &file.to_string_lossy(),
+        model.unwrap_or(""),
+    ]
+    .map(String::from);
     host::open_pane(run, path, name, &argv).inspect_err(|_| {
         let _ = std::fs::remove_file(&file);
     })
@@ -267,7 +278,13 @@ pub fn background_id(stdout: &str) -> Option<String> {
 /// Create the issue's worktree and start a session on it: in a pane where the
 /// host opens them, in the background otherwise. Slow (a fetch, a worktree,
 /// a question to GitHub): run it off the interface's thread.
-pub fn start(meta: &Path, root: &Path, host: Host, issue: &Wanted) -> Result<Started, String> {
+pub fn start(
+    meta: &Path,
+    root: &Path,
+    host: Host,
+    issue: &Wanted,
+    model: Option<&str>,
+) -> Result<Started, String> {
     let branch = branch_for(issue);
     let name = issue.name();
     let path = make_worktree(meta, root, &issue.project, &branch)?;
@@ -291,7 +308,7 @@ pub fn start(meta: &Path, root: &Path, host: Host, issue: &Wanted) -> Result<Sta
         Host::GlxyTerm => {
             let prompt = prompt_for(issue, &slug, &branch, &path, &body, true);
             let scratch = std::env::temp_dir().join("meta-dash");
-            let pane = launch_in_pane(&host::glxy_term, &scratch, &name, &path, &prompt)
+            let pane = launch_in_pane(&host::glxy_term, &scratch, &name, &path, &prompt, model)
                 .map_err(|why| format!("{made}, but no pane opened: {why}"))?;
             Ok(Started {
                 said: format!("started {name} beside this pane on {branch}"),
@@ -302,10 +319,17 @@ pub fn start(meta: &Path, root: &Path, host: Host, issue: &Wanted) -> Result<Sta
         Host::None => {
             let prompt = prompt_for(issue, &slug, &branch, &path, &body, false);
             let mut claude = Command::new("claude");
-            claude
-                .current_dir(root)
-                .args(["--bg", "--name", &name, "--permission-mode", "acceptEdits"])
-                .arg(prompt);
+            claude.current_dir(root).args([
+                "--bg",
+                "--name",
+                &name,
+                "--permission-mode",
+                "acceptEdits",
+            ]);
+            if let Some(model) = model {
+                claude.args(["--model", model]);
+            }
+            claude.arg(prompt);
             let said = super::run(claude, Duration::from_secs(60))
                 .map(|(_, stdout)| stdout)
                 .unwrap_or_default();
@@ -411,6 +435,7 @@ mod tests {
             "claw-62",
             Path::new("/ws/claw/feat/62-x"),
             prompt,
+            None,
         );
         assert_eq!(pane, Ok(9));
         let args = asked.borrow()[0].clone();
@@ -452,6 +477,34 @@ mod tests {
         );
         assert!(!Path::new(&args[13]).exists());
 
+        // A model, when one was chosen, is named to Claude; none, and it is not.
+        let pane = launch_in_pane(
+            &run,
+            scratch.path(),
+            "claw-64",
+            Path::new("/ws"),
+            "hi",
+            Some("claude-opus-5-5"),
+        );
+        assert_eq!(pane, Ok(9));
+        let args = asked.borrow()[1].clone();
+        assert_eq!(args[14], "claude-opus-5-5");
+        let script = args[10].replace("exec claude", "printf '%s,'");
+        let out = Command::new("sh")
+            .args(["-c", &script])
+            .args(&args[11..])
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "--name,claw-64,--model,claude-opus-5-5,hi,"
+        );
+        let out = Command::new("sh")
+            .args(["-c", &script, "sh", "claw-64", "/nowhere", ""])
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "--name,claw-64,,");
+
         // A refusal leaves no prompt behind.
         let refused = |_: &[String]| Some("error: no window\n".to_string());
         assert!(launch_in_pane(
@@ -459,7 +512,8 @@ mod tests {
             scratch.path(),
             "claw-63",
             Path::new("/ws"),
-            prompt
+            prompt,
+            None
         )
         .is_err());
         assert_eq!(std::fs::read_dir(scratch.path()).unwrap().count(), 0);

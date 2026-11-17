@@ -107,6 +107,11 @@ pub struct Project {
     pub work: u64,
     /// `owner/name` on GitHub, when the origin is there.
     pub slug: Option<String>,
+    /// The first changed paths in the main worktree, as `git status --short`
+    /// lists them.
+    pub changes: Vec<String>,
+    /// The last few commits on the main worktree's branch: short id and subject.
+    pub recent: Vec<String>,
 }
 
 /// GitHub's summary of a pull request's checks.
@@ -220,6 +225,8 @@ pub fn scan_project(
         quiet_days: 0,
         work: 0,
         slug: url.and_then(github_slug),
+        changes: Vec::new(),
+        recent: Vec::new(),
     };
     if !dir.exists() {
         project.state = ProjectState::Missing;
@@ -315,9 +322,17 @@ pub fn scan_project(
             project.behind = counts.next().unwrap_or(0);
             project.ahead = counts.next().unwrap_or(0);
         }
-        project.dirty = git(&main, &["status", "--porcelain"])
-            .map(|out| line_count(&out))
-            .unwrap_or(0);
+        let status = git(&main, &["status", "--porcelain"]).unwrap_or_default();
+        project.dirty = line_count(&status);
+        project.changes = status
+            .lines()
+            .filter(|line| !line.is_empty())
+            .take(8)
+            .map(str::to_string)
+            .collect();
+        project.recent = git(&main, &["log", "-n", "3", "--format=%h %s"])
+            .map(|out| out.lines().map(str::to_string).collect())
+            .unwrap_or_default();
         project.is_default_branch = is_default(&project.branch);
     } else {
         project.state = ProjectState::NoWorktree;
