@@ -5,15 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- *(deps)* replace `chrono` with `jiff` for the local days in `meta dash`, clearing RUSTSEC-2026-0543 (`chrono` is unmaintained, with no patched version). The advisory names `jiff` first among its alternatives. Nothing a user sees changes
-- *(skill)* `meta skill status` no longer says the meta-tool skill is up to date when only its version line matches. The skill changes without that line changing, so an installed copy many edits behind read as current. Status now compares the files and says when they differ; `meta skill update` already did (#221)
-- *(skill)* the bundled meta-tool skill documents `meta dash`, and its changelog notes say they stop at v0.11.0. The repository's own copy under `.claude/skills/` had drifted from the bundled one and still described `rules` and `mcp` as `-x` commands; it is the bundled one again, and a test holds it there (#221)
-
-## [0.86.0] - 2026-11-17
+## [0.86.0] - 2026-11-18
 
 ### Added
 
@@ -25,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - *(dash)* the dashboard can open Claude Code sessions. Enter on a session attaches it, and Enter twice on an issue starts work on it: a branch named for the issue (`fix/435-claw-service-command`), a worktree made with `meta worktree add`, and a session there with the issue as its prompt. In Galaxy Terminal with its control socket on (`GLXY_CTL_SOCK`), sessions open in a pane beside the dashboard and a session already in a pane is focused instead of opened twice. In any other terminal, attaching hands the terminal to `claude attach` until you detach, and starting runs the session in the background (#212)
 - *(dash)* `meta dash` in a terminal opens an interactive, read-only dashboard over the same data: seven views (Now, Projects, Board, Issues, Sessions, Cost, Workspaces), each grouped by tier, with a filter (`/`), foldable groups, a detail line for the selected row, mouse support, and a switch to any other workspace found near the home folder. The workspace is read in the background, git and sessions first and GitHub and cost after, and again every two minutes or on `r`, so keys never wait. Piped, or with `--summary`, it prints the plain summary as before (#211)
 - *(dash)* `meta dash` reads the whole workspace once and reports it: each project's tier (the `active`, `maintained` and `dormant` labels) and git state, the branches in flight with their pull requests and checks, open issues, and the Claude Code sessions running in it. `--json` prints everything; without it, a summary by tier. `--retier` rewrites tier labels that are due a move (work in flight makes a project active; 90 and 180 days without a commit move it down), `--no-github` and `--no-sessions` skip the `gh` and `claude` CLIs. It also sums what Claude Code has cost from the session transcripts on this machine, by project, day and model, at prices listed in the binary (`--no-cost` skips it). This is the data half of the workspace dashboard (#210)
+
+### Fixed
+
+- *(deps)* `meta dash` uses `jiff` for local days. `chrono`, which it was first written with, is unmaintained with no patched version (RUSTSEC-2026-0543), and never shipped in a release
+- *(skill)* `meta skill status` no longer says the meta-tool skill is up to date when only its version line matches. The skill changes without that line changing, so an installed copy many edits behind read as current. Status now compares the files and says when they differ; `meta skill update` already did (#221)
+- *(skill)* the bundled meta-tool skill documents `meta dash`, and its changelog notes say they stop at v0.11.0. The repository's own copy under `.claude/skills/` had drifted from the bundled one and still described `rules` and `mcp` as `-x` commands; it is the bundled one again, and a test holds it there (#221)
 
 ## [0.85.0] - 2026-11-12
 
