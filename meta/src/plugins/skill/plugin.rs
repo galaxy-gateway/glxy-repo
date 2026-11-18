@@ -1,6 +1,7 @@
 use super::{
-    adapt, audit, bundled_version, default_skill_root, install, installed_version, is_installed,
-    locations, registry, remove, scan, search, steal, update, SkillAction, UpdateRefusal,
+    adapt, audit, bundled_version, default_skill_root, install, installed_version, is_current,
+    is_installed, locations, registry, remove, scan, search, steal, update, SkillAction,
+    UpdateRefusal,
 };
 use anyhow::Result;
 use clap::{Arg, ArgAction, ArgMatches, Command};
@@ -197,7 +198,14 @@ fn handle_status(config: &RuntimeConfig) -> Result<()> {
     let installed = installed_version(&root);
     let installed_label = installed.as_deref().unwrap_or("unknown");
     let bundled_label = bundled.as_deref().unwrap_or("unknown");
-    if installed.is_some() && installed == bundled {
+    if installed == bundled && !is_current(&root) {
+        // Same version line, other content: the skill changed without it.
+        println!(
+            "  {} Skill differs from the bundled one (both say version {}). Run 'meta skill update'.",
+            "⚠".yellow(),
+            installed_label
+        );
+    } else if installed.is_some() && installed == bundled {
         println!(
             "  {} Skill up to date (version {})",
             "✓".green(),
