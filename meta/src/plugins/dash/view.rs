@@ -1,7 +1,9 @@
 //! What each view of the dashboard shows, as plain rows: no terminal here.
 //! The interface in `tui.rs` draws these and acts on what a row carries.
 
-use chrono::{Local, NaiveDate, TimeZone};
+use jiff::civil::Date;
+use jiff::tz::TimeZone;
+use jiff::{Timestamp, ToSpan};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
@@ -272,20 +274,18 @@ pub fn model_name(id: &str) -> String {
     )
 }
 
-fn today_of(snapshot: &Snapshot) -> NaiveDate {
-    Local
-        .timestamp_opt(snapshot.at as i64, 0)
-        .single()
-        .map(|at| at.date_naive())
+fn today_of(snapshot: &Snapshot) -> Date {
+    Timestamp::from_second(snapshot.at as i64)
+        .map(|at| at.to_zoned_datetime(TimeZone::system()).date())
         .unwrap_or_default()
 }
 
 /// How long ago a `YYYY-MM-DD` day was: now, 3d, 2w, 5mo.
-pub fn age(day: &str, today: NaiveDate) -> String {
-    let Ok(then) = NaiveDate::parse_from_str(day, "%Y-%m-%d") else {
+pub fn age(day: &str, today: Date) -> String {
+    let Ok(then) = day.parse::<Date>() else {
         return String::new();
     };
-    let days = (today - then).num_days().max(0);
+    let days = today.since(then).map_or(0, |span| span.get_days()).max(0);
     match days {
         0 => "now".to_string(),
         1..=13 => format!("{days}d"),
@@ -359,7 +359,7 @@ struct Out<'a> {
     ui: &'a Ui,
     snapshot: &'a Snapshot,
     tiers: HashMap<&'a str, Option<Tier>>,
-    today: NaiveDate,
+    today: Date,
 }
 
 impl<'a> Out<'a> {
@@ -1365,12 +1365,14 @@ fn cost(out: &mut Out) {
     }
     out.note(0, tiles);
 
-    let today = NaiveDate::parse_from_str(&cost.today, "%Y-%m-%d").unwrap_or_default();
-    let since = span.days().map(|days| {
-        (today - chrono::Duration::days(days - 1))
-            .format("%Y-%m-%d")
-            .to_string()
-    });
+    let today: Date = cost.today.parse().unwrap_or_default();
+    // A day that many back, as the rows write theirs; none if it cannot be counted.
+    let back = |days: i64| {
+        today
+            .checked_sub(days.days())
+            .map_or(String::new(), |day| day.to_string())
+    };
+    let since = span.days().map(|days| back(days - 1));
     let in_span = |day: &str| {
         since
             .as_deref()
@@ -1379,10 +1381,8 @@ fn cost(out: &mut Out) {
 
     let days: Vec<f64> = (0..14)
         .rev()
-        .map(|back| {
-            let day = (today - chrono::Duration::days(back))
-                .format("%Y-%m-%d")
-                .to_string();
+        .map(|days_back| {
+            let day = back(days_back);
             cost.rows
                 .iter()
                 .filter(|row| row.day == day)
@@ -2159,7 +2159,7 @@ pub(super) mod tests {
         );
         assert_eq!(model_name("claude-fable-5-2"), "Fable 5.2");
         assert_eq!(model_name("claude-mystery-x"), "claude-mystery-x");
-        let today = NaiveDate::from_ymd_opt(2026, 11, 12).unwrap();
+        let today = jiff::civil::date(2026, 11, 12);
         assert_eq!(
             (
                 age("2026-11-12", today),

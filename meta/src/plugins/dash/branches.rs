@@ -253,7 +253,7 @@ fn log_deleted(log: Option<&Path>, project: &str, branch: &str, sha: &str) {
         .append(true)
         .open(log)
     {
-        let day = chrono::Local::now().format("%Y-%m-%d");
+        let day = jiff::ZonedDateTime::now().date();
         let _ = writeln!(file, "{day} {project} {branch} {sha}");
     }
 }
