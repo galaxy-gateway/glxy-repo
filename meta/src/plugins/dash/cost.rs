@@ -1,7 +1,9 @@
 //! What Claude Code has cost: token usage summed from its session transcripts
 //! by where the session ran, day and model, priced from a table kept here.
 
-use chrono::{DateTime, Local, TimeZone};
+use jiff::civil::Date;
+use jiff::tz::TimeZone;
+use jiff::{Timestamp, ToSpan, ZonedDateTime};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -120,10 +122,7 @@ impl Reply {
 
 /// The usage a transcript line carries, with its day in `zone`. `None` for
 /// any line that is not an assistant reply with usage and a real model.
-pub fn reply_of<Tz: TimeZone>(line: &str, zone: &Tz) -> Option<Reply>
-where
-    Tz::Offset: std::fmt::Display,
-{
+pub fn reply_of(line: &str, zone: &TimeZone) -> Option<Reply> {
     // Most lines are prompts and tool results: skip them without parsing.
     if !line.contains("\"usage\"") {
         return None;
@@ -155,8 +154,8 @@ where
     let day = entry
         .get("timestamp")
         .and_then(Value::as_str)
-        .and_then(|stamp| DateTime::parse_from_rfc3339(stamp).ok())
-        .map(|stamp| stamp.with_timezone(zone).format("%Y-%m-%d").to_string())
+        .and_then(|stamp| stamp.parse::<Timestamp>().ok())
+        .map(|stamp| stamp.to_zoned_datetime(zone.clone()).date().to_string())
         .unwrap_or_default();
     Some(Reply {
         key: format!(
@@ -221,12 +220,8 @@ impl Cost {
     /// Dollars over the `days` days ending today; every day when `None`.
     pub fn usd_over(&self, days: Option<i64>) -> f64 {
         let since = days.and_then(|days| {
-            let today = chrono::NaiveDate::parse_from_str(&self.today, "%Y-%m-%d").ok()?;
-            Some(
-                (today - chrono::Duration::days(days - 1))
-                    .format("%Y-%m-%d")
-                    .to_string(),
-            )
+            let today: Date = self.today.parse().ok()?;
+            Some(today.checked_sub((days - 1).days()).ok()?.to_string())
         });
         self.rows
             .iter()
@@ -340,6 +335,7 @@ pub fn read(root: &Path, keys: &[String], slugs: &HashMap<String, String>) -> Op
             .or_insert_with(|| bucket(root, keys, slugs, cwd))
             .clone()
     };
+    let zone = TimeZone::system();
     let mut sums = Sums::default();
     for path in paths {
         let Ok(bytes) = std::fs::read(&path) else {
@@ -351,12 +347,12 @@ pub fn read(root: &Path, keys: &[String], slugs: &HashMap<String, String>) -> Op
             None => continue,
         };
         for line in whole.split(|byte| *byte == b'\n') {
-            if let Some(reply) = reply_of(&String::from_utf8_lossy(line), &Local) {
+            if let Some(reply) = reply_of(&String::from_utf8_lossy(line), &zone) {
                 sums.add(reply, &mut bucket_of);
             }
         }
     }
-    Some(sums.finish(Local::now().format("%Y-%m-%d").to_string()))
+    Some(sums.finish(ZonedDateTime::now().date().to_string()))
 }
 
 fn bucket(root: &Path, keys: &[String], slugs: &HashMap<String, String>, cwd: &str) -> String {
@@ -392,7 +388,6 @@ fn bucket(root: &Path, keys: &[String], slugs: &HashMap<String, String>, cwd: &s
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::FixedOffset;
 
     fn line(id: &str, model: &str, stamp: &str, usage: &str) -> String {
         format!(
@@ -400,8 +395,8 @@ mod tests {
         )
     }
 
-    fn utc() -> FixedOffset {
-        FixedOffset::east_opt(0).unwrap()
+    fn utc() -> TimeZone {
+        TimeZone::UTC
     }
 
     #[test]
@@ -420,7 +415,7 @@ mod tests {
         // 1000*8 + 200000*40 + 60000*10 + 40000*16 + 5000000*0.2, per million.
         assert!((reply.usd().unwrap() - 10.248).abs() < 1e-9);
         // West of Greenwich that reply was made the evening before.
-        let west = FixedOffset::west_opt(6 * 3600).unwrap();
+        let west = TimeZone::fixed(jiff::tz::offset(-6));
         assert_eq!(reply_of(&text, &west).unwrap().day, "2026-11-11");
     }
 
