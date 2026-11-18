@@ -412,6 +412,25 @@ Labels narrow the current scope (directory-aware, `-w`, `--all`, `--projects`); 
 
 ---
 
+### `meta dash` - Workspace Dashboard
+
+One read of the whole workspace, whatever directory it is run from: each project's tier (the `active`, `maintained` and `dormant` labels) and git state, branches in flight with their pull requests and checks, open issues, Claude Code sessions, and what they cost. Needs `gh` for pull requests and issues and `claude` for sessions; each is skipped with a note when missing.
+
+```bash
+meta dash                      # interactive dashboard (a plain summary when piped)
+meta dash --summary            # projects by tier, tier moves due, drift from the GitHub account
+meta dash --json               # everything it reads, for scripts
+meta dash --json --no-github   # local state only, no network (also --no-sessions, --no-cost)
+meta dash --retier             # apply the tier moves due: the labels, and the README's Tier column
+meta dash --retier --commit    # the same, as one commit (never pushes)
+```
+
+A project with work in flight is due `active`; with none, `maintained` after 90 days without a commit and `dormant` after 180. Moves are only reported until `--retier`.
+
+In the dashboard: `1`-`7` change view, Enter attaches a session or (twice) starts work on an issue in a new worktree, `p` sends a session a prompt, `x` finishes a branch, `b` lists a project's remote branches, `?` shows every key. In Galaxy Terminal with `[control] enable = true`, sessions open in panes beside it.
+
+---
+
 ### `meta workspace` - Workspaces (alias: `ws`)
 
 Create and list workspaces, including nested ones.

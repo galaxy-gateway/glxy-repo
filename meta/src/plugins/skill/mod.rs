@@ -112,6 +112,12 @@ fn installed_fingerprint(root: &Path) -> Option<String> {
     Some(fingerprint(&skill_md, &changelog))
 }
 
+/// Whether the installed files are the bundled ones, byte for byte. The
+/// version field cannot say: the skill changes without it changing.
+pub fn is_current(root: &Path) -> bool {
+    installed_fingerprint(root).as_deref() == Some(fingerprint(SKILL_MD, SKILL_CHANGELOG).as_str())
+}
+
 fn write_lock(root: &Path) -> Result<()> {
     let lock = serde_json::json!({
         "version": bundled_version(),
@@ -203,7 +209,7 @@ pub fn update(root: &Path, force: bool) -> Result<SkillAction> {
     // Content identical to the bundle: nothing to do. Backfill the lock so
     // legacy installs (written before lock files existed) gain a fingerprint.
     let on_disk = installed_fingerprint(root);
-    if on_disk.as_deref() == Some(fingerprint(SKILL_MD, SKILL_CHANGELOG).as_str()) {
+    if is_current(root) {
         if recorded_fingerprint(root).is_none() {
             write_lock(root)?;
         }
@@ -415,5 +421,36 @@ mod tests {
         assert!(remove(tmp.path()).unwrap());
         assert!(!is_installed(tmp.path()));
         assert!(!remove(tmp.path()).unwrap());
+    }
+
+    #[test]
+    fn a_changed_skill_with_the_same_version_is_not_current() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().join("meta-tool");
+        write_skill(&root).unwrap();
+        assert!(is_current(&root));
+        // Same version line, other content: only the content can tell.
+        let md = root.join("SKILL.md");
+        fs::write(
+            &md,
+            format!("{}\nan older line\n", fs::read_to_string(&md).unwrap()),
+        )
+        .unwrap();
+        assert_eq!(installed_version(&root), bundled_version());
+        assert!(!is_current(&root));
+    }
+
+    /// The repository keeps its own installed copy of the skill for agents
+    /// working on it. It is the bundled one, or it has drifted.
+    #[test]
+    fn the_repositorys_own_copy_is_the_bundled_skill() {
+        let own = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.claude/skills/meta-tool");
+        // Not there in a packaged crate: nothing to compare.
+        if own.join("SKILL.md").exists() {
+            assert!(
+                is_current(&own),
+                "run: cp -r meta/src/plugins/skill/assets/meta-tool/. .claude/skills/meta-tool/"
+            );
+        }
     }
 }

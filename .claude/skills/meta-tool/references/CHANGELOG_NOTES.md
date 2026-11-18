@@ -4,7 +4,9 @@ This document tracks version history and breaking changes for the meta CLI tool 
 
 ## Version History
 
-### v0.11.0 (Current)
+These notes stop at v0.11.0. For anything later see `meta/CHANGELOG.md` in the repository; the skill itself is kept current with the CLI it ships in.
+
+### v0.11.0
 
 **Release Type:** Minor release with CI/dev improvements
 

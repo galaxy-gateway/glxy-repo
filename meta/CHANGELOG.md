@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- *(skill)* `meta skill status` no longer says the meta-tool skill is up to date when only its version line matches. The skill changes without that line changing, so an installed copy many edits behind read as current. Status now compares the files and says when they differ; `meta skill update` already did (#221)
+- *(skill)* the bundled meta-tool skill documents `meta dash`, and its changelog notes say they stop at v0.11.0. The repository's own copy under `.claude/skills/` had drifted from the bundled one and still described `rules` and `mcp` as `-x` commands; it is the bundled one again, and a test holds it there (#221)
+
 ## [0.86.0] - 2026-11-17
 
 ### Added
