@@ -1066,7 +1066,7 @@ impl App {
             Tell::Read { config, .. } if config != self.config => Vec::new(),
             Tell::Read {
                 quick,
-                result: Ok(snapshot),
+                result: Ok(mut snapshot),
                 ..
             } => {
                 let mut said: Vec<String> = snapshot.notes.clone();
@@ -1077,6 +1077,9 @@ impl App {
                     ));
                 }
                 self.status = said.join(" · ");
+                if let Some(before) = &self.snapshot {
+                    super::keep_last_seen(&mut snapshot, before);
+                }
                 let told = match &self.snapshot {
                     Some(before) => notices(&before.sessions, &snapshot.sessions),
                     None => Vec::new(),
@@ -2739,5 +2742,55 @@ mod tests {
         );
         app.on_key(key(KeyCode::Esc));
         assert!(app.finishing.is_none());
+    }
+
+    #[test]
+    fn a_project_github_did_not_answer_for_keeps_what_was_last_seen() {
+        let mut app = app();
+        // The next read: GitHub answers for every project but claw.
+        let mut next = snapshot();
+        next.github.failed = vec!["claw".into()];
+        next.issues.retain(|issue| issue.project != "claw");
+        for item in next.board.iter_mut().filter(|item| item.project == "claw") {
+            item.pr = None;
+            item.section = crate::plugins::dash::Section::Idle;
+        }
+        app.on_tell(Tell::Read {
+            config: "/ws/.metarepo".into(),
+            quick: false,
+            result: Ok(Box::new(next)),
+        });
+        let now = app.snapshot.as_ref().unwrap();
+        // Its failing pull request is still on the branch, in the section it earns.
+        let branch = now
+            .board
+            .iter()
+            .find(|item| item.branch == "feat/254-pane")
+            .unwrap();
+        assert_eq!(branch.pr.as_ref().map(|pr| pr.number), Some(7));
+        assert_eq!(branch.section, crate::plugins::dash::Section::Fix);
+        // Its issues are still listed, once each, and the others are untouched.
+        let claw: Vec<u64> = now
+            .issues
+            .iter()
+            .filter(|issue| issue.project == "claw")
+            .map(|issue| issue.number)
+            .collect();
+        assert_eq!(claw.len(), 2);
+        assert_eq!(now.issues.len(), 4);
+        // And the person is still told which project has no fresh data.
+        assert!(screen(&mut app, 120, 20)[19].contains("no GitHub data for claw"));
+
+        // A read where it answers again replaces what was kept.
+        let mut fresh = snapshot();
+        fresh
+            .issues
+            .retain(|issue| !(issue.project == "claw" && issue.number == 1));
+        app.on_tell(Tell::Read {
+            config: "/ws/.metarepo".into(),
+            quick: false,
+            result: Ok(Box::new(fresh)),
+        });
+        assert_eq!(app.snapshot.as_ref().unwrap().issues.len(), 3);
     }
 }

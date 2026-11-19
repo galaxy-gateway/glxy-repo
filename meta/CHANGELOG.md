@@ -5,6 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- *(dash)* a project GitHub gives no answer for keeps the pull requests and issues last seen of it. A timeout for one repository used to strip its pull request and check marks from the Board and its issues from Issues until the next read that worked. The footer still names the project (#225)
+
 ## [0.86.0] - 2026-11-18
 
 ### Added

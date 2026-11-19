@@ -151,6 +151,57 @@ pub fn section_of(item: &Item, own: &[&Session]) -> Section {
     }
 }
 
+/// Where GitHub gave no answer for a project this time, keep what was last
+/// seen of it: its pull requests on the board and its issues. Without this a
+/// timeout would strip a project's rows until the next read that works.
+pub fn keep_last_seen(new: &mut Snapshot, old: &Snapshot) {
+    if new.github.failed.is_empty() {
+        return;
+    }
+    let failed: HashSet<&str> = new.github.failed.iter().map(String::as_str).collect();
+    for was in old
+        .board
+        .iter()
+        .filter(|item| item.pr.is_some() && failed.contains(item.project.as_str()))
+    {
+        match new
+            .board
+            .iter_mut()
+            .find(|item| item.project == was.project && item.branch == was.branch)
+        {
+            Some(item) => item.pr = was.pr.clone(),
+            // Not checked out here: the row is its pull request and nothing else.
+            None if was.path.is_empty() => new.board.push(was.clone()),
+            // It had a worktree and has none now: the branch is gone locally.
+            None => {}
+        }
+    }
+    new.board
+        .sort_by(|a, b| a.project.cmp(&b.project).then(a.branch.cmp(&b.branch)));
+    new.issues.extend(
+        old.issues
+            .iter()
+            .filter(|issue| failed.contains(issue.project.as_str()))
+            .cloned(),
+    );
+    new.issues.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then(a.project.cmp(&b.project))
+            .then(b.number.cmp(&a.number))
+    });
+    place_sessions(&mut new.board, &new.sessions);
+    github::mark_in_flight(&mut new.issues, &new.board);
+    let busy: HashSet<&str> = new.board.iter().map(|item| item.project.as_str()).collect();
+    new.at_rest = new
+        .projects
+        .iter()
+        .filter(|project| {
+            project.state == ProjectState::Ok && !busy.contains(project.name.as_str())
+        })
+        .count() as u64;
+}
+
 /// Give each branch on the board its section, by the sessions at work on it.
 /// Run again whenever the sessions are read anew.
 pub fn place_sessions(board: &mut [Item], sessions: &[Session]) {
