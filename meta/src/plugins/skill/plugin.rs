@@ -40,6 +40,45 @@ fn resolved_dest(flag: Option<&str>, config: &RuntimeConfig) -> Option<String> {
         .map(expand_tilde)
 }
 
+/// Pick where `steal` installs: `--global` (~/.claude/skills), `--local`
+/// (./.claude/skills in the current repo), or ask in a terminal. Without a TTY
+/// and without a flag, default to local so nothing lands in the user's home.
+fn choose_scope(global: bool, local: bool) -> anyhow::Result<String> {
+    let local_dir = std::env::current_dir()?.join(".claude/skills");
+    let global_dir = expand_tilde("~/.claude/skills");
+    let use_global = if global {
+        true
+    } else if local || !metarepo_core::is_interactive() {
+        false
+    } else {
+        let items = [
+            format!("This repo  ({})", local_dir.display()),
+            format!("Global     ({global_dir})"),
+        ];
+        dialoguer::Select::new()
+            .with_prompt("Install skill where?")
+            .items(&items)
+            .default(0)
+            .interact()?
+            == 1
+    };
+    let dir = if use_global {
+        PathBuf::from(global_dir)
+    } else {
+        local_dir
+    };
+    if !dir.exists() && metarepo_core::is_interactive() {
+        let create = dialoguer::Confirm::new()
+            .with_prompt(format!("{} does not exist. Create it?", dir.display()))
+            .default(true)
+            .interact()?;
+        if !create {
+            anyhow::bail!("aborted: {} does not exist", dir.display());
+        }
+    }
+    Ok(dir.to_string_lossy().into_owned())
+}
+
 /// Configured `[skill] dest-roots`, or an empty list for the built-in chain.
 fn resolved_dest_roots(config: &RuntimeConfig) -> Vec<String> {
     config
@@ -367,7 +406,17 @@ impl MetaPlugin for SkillPlugin {
                     .get_one::<String>("path")
                     .map(String::as_str)
                     .expect("path is required");
-                let dest = resolved_dest(m.get_one::<String>("dest").map(String::as_str), config);
+                let mut dest =
+                    resolved_dest(m.get_one::<String>("dest").map(String::as_str), config);
+                let roots = resolved_dest_roots(config);
+                // Nothing pinned the destination: make the user choose rather than
+                // silently falling through to ~/.claude/skills.
+                if dest.is_none()
+                    && roots.is_empty()
+                    && std::env::var_os("CLAUDE_SKILLS_HOME").is_none()
+                {
+                    dest = Some(choose_scope(m.get_flag("global"), m.get_flag("local"))?);
+                }
                 let select = steal::SelectOpts {
                     all: m.get_flag("all"),
                     names: m
@@ -680,7 +729,7 @@ fn skill_command() -> Command {
                 .arg(
                     Arg::new("dest")
                         .long("dest")
-                        .help("Destination skills root (defaults to first existing candidate)"),
+                        .help("Destination skills root (else prompts: this repo or global)"),
                 )
                 .arg(
                     Arg::new("ref")
@@ -765,6 +814,21 @@ fn skill_command() -> Command {
                     Arg::new("dest")
                         .long("dest")
                         .help("Destination skills root (defaults to first existing candidate)"),
+                )
+                .arg(
+                    Arg::new("global")
+                        .long("global")
+                        .short('g')
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with_all(["local", "dest"])
+                        .help("Install to ~/.claude/skills (skips the prompt)"),
+                )
+                .arg(
+                    Arg::new("local")
+                        .long("local")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with("dest")
+                        .help("Install to ./.claude/skills in this repo (skips the prompt)"),
                 )
                 .arg(
                     Arg::new("ref")
