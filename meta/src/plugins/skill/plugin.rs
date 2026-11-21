@@ -729,7 +729,7 @@ fn skill_command() -> Command {
                 .arg(
                     Arg::new("dest")
                         .long("dest")
-                        .help("Destination skills root (else prompts: this repo or global)"),
+                        .help("Destination skills root (defaults to first existing candidate)"),
                 )
                 .arg(
                     Arg::new("ref")
@@ -813,7 +813,7 @@ fn skill_command() -> Command {
                 .arg(
                     Arg::new("dest")
                         .long("dest")
-                        .help("Destination skills root (defaults to first existing candidate)"),
+                        .help("Destination skills root (else prompts: this repo or global)"),
                 )
                 .arg(
                     Arg::new("global")
