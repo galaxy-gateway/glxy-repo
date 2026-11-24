@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- *(skill)* `meta skill steal` takes `--user` (or `-g`) to install to `~/.claude/skills`. It was `--global`, which the top-level `--workspace` flag already answers to, so every debug build of `meta` panicked on start and the tests failed (#231)
 - *(dash)* a project GitHub gives no answer for keeps the pull requests and issues last seen of it. A timeout for one repository used to strip its pull request and check marks from the Board and its issues from Issues until the next read that worked. The footer still names the project (#225)
 
 ## [0.86.0] - 2026-11-18
