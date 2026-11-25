@@ -40,7 +40,7 @@ fn resolved_dest(flag: Option<&str>, config: &RuntimeConfig) -> Option<String> {
         .map(expand_tilde)
 }
 
-/// Pick where `steal` installs: `--global` (~/.claude/skills), `--local`
+/// Pick where `steal` installs: `--user` (~/.claude/skills), `--local`
 /// (./.claude/skills in the current repo), or ask in a terminal. Without a TTY
 /// and without a flag, default to local so nothing lands in the user's home.
 fn choose_scope(global: bool, local: bool) -> anyhow::Result<String> {
@@ -415,7 +415,7 @@ impl MetaPlugin for SkillPlugin {
                     && roots.is_empty()
                     && std::env::var_os("CLAUDE_SKILLS_HOME").is_none()
                 {
-                    dest = Some(choose_scope(m.get_flag("global"), m.get_flag("local"))?);
+                    dest = Some(choose_scope(m.get_flag("user"), m.get_flag("local"))?);
                 }
                 let select = steal::SelectOpts {
                     all: m.get_flag("all"),
@@ -816,8 +816,10 @@ fn skill_command() -> Command {
                         .help("Destination skills root (else prompts: this repo or global)"),
                 )
                 .arg(
-                    Arg::new("global")
-                        .long("global")
+                    // Not --global: the top-level --workspace flag already answers to
+                    // --global and is global(true), so clap rejects a second one.
+                    Arg::new("user")
+                        .long("user")
                         .short('g')
                         .action(ArgAction::SetTrue)
                         .conflicts_with_all(["local", "dest"])
